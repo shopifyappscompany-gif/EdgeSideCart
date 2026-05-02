@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "b5830ef0857b056c23608b0df3eedfca"
-application_url = "https://edgecart-production.up.railway.app"
+application_url = "https://edgesidecart.onrender.com"
 embedded = true
 name = "EdgeCart"
 
@@ -9,7 +9,7 @@ name = "EdgeCart"
 scopes = "read_products,write_products,read_discounts"
 
 [app_proxy]
-url = "https://edgecart-production.up.railway.app"
+url = "https://edgesidecart.onrender.com"
 subpath = "edge-cart"
 prefix = "apps"
 
@@ -26,9 +26,9 @@ api_version = "2025-07"
 
 [auth]
 redirect_urls = [
-  "https://edgecart-production.up.railway.app/auth/callback",
-  "https://edgecart-production.up.railway.app/auth/shopify/callback",
-  "https://edgecart-production.up.railway.app/api/auth"
+  "https://edgesidecart.onrender.com/auth/callback",
+  "https://edgesidecart.onrender.com/auth/shopify/callback",
+  "https://edgesidecart.onrender.com/api/auth"
 ]
 
 [build]
