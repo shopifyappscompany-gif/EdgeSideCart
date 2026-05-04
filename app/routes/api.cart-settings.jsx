@@ -47,6 +47,11 @@ const DEFAULT_SETTINGS = {
   freebieProductTitle: null,
   freebieProductImageUrl: null,
   freebieTriggerProductIds: [],
+  freebieTriggerCollectionIds: [],
+  freebieMaxCartValue: null,
+  freebieMaxQuantity: null,
+  freebieConditionLogic: "AND",
+  upsellTriggerCollectionIds: [],
   scrollableItems: true,
   showLineItemProperties: false,
 };
@@ -94,6 +99,8 @@ export const loader = async ({ request }) => {
       upsellProducts: safeParseJSON(settings.upsellProducts, []),
       upsellTriggerProductIds: safeParseJSON(settings.upsellTriggerProductIds, []),
       freebieTriggerProductIds: safeParseJSON(settings.freebieTriggerProductIds, []),
+      freebieTriggerCollectionIds: safeParseJSON(settings.freebieTriggerCollectionIds, []),
+      upsellTriggerCollectionIds: safeParseJSON(settings.upsellTriggerCollectionIds, []),
       tieredRewards: safeParseJSON(settings.tieredRewards, []),
     };
 

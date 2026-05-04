@@ -912,38 +912,55 @@
     var t   = settings.freebieTriggerType;
     var fid = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
 
-    if (t === "cartValue") {
-      var realTotal = cart.items.reduce(function (sum, i) {
-        return String(i.variant_id) === fid ? sum : sum + i.line_price;
-      }, 0);
-      return (realTotal / 100) >= settings.freebieMinCartValue;
-    }
-    if (t === "quantity") {
-      var realQty = cart.items.reduce(function (sum, i) {
-        return String(i.variant_id) === fid ? sum : sum + i.quantity;
-      }, 0);
-      return realQty >= settings.freebieMinQuantity;
-    }
-    if (t === "product") {
-      var ids = (settings.freebieTriggerProductIds || []).map(extractId);
+    var productIds = (settings.freebieTriggerProductIds || []).map(function (p) {
+      return extractId(typeof p === "object" ? p.id : p);
+    });
+    var hasProductCond = productIds.length > 0;
+
+    function productMet() {
       return cart.items.some(function (i) {
-        return String(i.variant_id) !== fid && ids.indexOf(String(i.product_id)) !== -1;
+        return String(i.variant_id) !== fid && productIds.indexOf(String(i.product_id)) !== -1;
       });
     }
-    return false;
+
+    /* "product" trigger = only product/collection condition */
+    if (t === "product") return productMet();
+
+    /* Primary condition */
+    var primaryMet = false;
+    if (t === "cartValue") {
+      var total = cart.total_price / 100;
+      primaryMet = total >= settings.freebieMinCartValue &&
+                   (!settings.freebieMaxCartValue || total <= settings.freebieMaxCartValue);
+    } else if (t === "quantity") {
+      var qty = cart.items.reduce(function (sum, i) {
+        return String(i.variant_id) === fid ? sum : sum + i.quantity;
+      }, 0);
+      primaryMet = qty >= settings.freebieMinQuantity &&
+                   (!settings.freebieMaxQuantity || qty <= settings.freebieMaxQuantity);
+    }
+
+    /* No product condition configured — primary alone decides */
+    if (!hasProductCond) return primaryMet;
+
+    /* Combine with AND / OR */
+    var logic = settings.freebieConditionLogic || "AND";
+    return logic === "OR" ? primaryMet || productMet() : primaryMet && productMet();
   }
 
   function freebieProgress() {
     if (!cart) return null;
-    var t = settings.freebieTriggerType;
+    var t   = settings.freebieTriggerType;
     var fid = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
 
     if (t === "cartValue") {
-      var cur    = cart.items.reduce(function (sum, i) {
-        return String(i.variant_id) === fid ? sum : sum + i.line_price;
-      }, 0) / 100;
+      var cur    = cart.total_price / 100;
       var target = settings.freebieMinCartValue;
-      var rem    = Math.max(0, target - cur);
+      var max    = settings.freebieMaxCartValue;
+      if (max && cur > max) {
+        return { pct: 100, msg: "Free gift available for orders up to " + moneyVal(max * 100) + " only." };
+      }
+      var rem = Math.max(0, target - cur);
       return {
         pct: Math.min(100, Math.round((cur / target) * 100)),
         msg: rem > 0 ? "Spend " + moneyVal(rem * 100) + " more to unlock your free gift!" : "",
@@ -954,7 +971,11 @@
         return String(i.variant_id) === fid ? sum : sum + i.quantity;
       }, 0);
       var targetQ = settings.freebieMinQuantity;
-      var remQ    = Math.max(0, targetQ - curQ);
+      var maxQ    = settings.freebieMaxQuantity;
+      if (maxQ && curQ > maxQ) {
+        return { pct: 100, msg: "Free gift available for orders up to " + maxQ + " items only." };
+      }
+      var remQ = Math.max(0, targetQ - curQ);
       return {
         pct: Math.min(100, Math.round((curQ / targetQ) * 100)),
         msg: remQ > 0 ? "Add " + remQ + " more item" + (remQ !== 1 ? "s" : "") + " to unlock your free gift!" : "",
@@ -969,7 +990,9 @@
     if (t === "cartValue")  return (cart.total_price / 100) >= settings.upsellMinCartValue;
     if (t === "quantity")   return cart.item_count >= settings.upsellMinQuantity;
     if (t === "product") {
-      var ids = (settings.upsellTriggerProductIds || []).map(extractId);
+      var ids = (settings.upsellTriggerProductIds || []).map(function (p) {
+        return extractId(typeof p === "object" ? p.id : p);
+      });
       return cart.items.some(function (i) { return ids.indexOf(String(i.product_id)) !== -1; });
     }
     return false;

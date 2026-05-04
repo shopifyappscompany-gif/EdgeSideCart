@@ -185,13 +185,55 @@ export const action = async ({ request }) => {
   }
 
   // Save freebie settings
+  const freebieTriggerType = String(form.get("freebieTriggerType") || "cartValue");
+
+  const maxCartRaw = form.get("freebieMaxCartValue");
+  const freebieMaxCartValue = maxCartRaw && String(maxCartRaw).trim() !== "" ? parseFloat(maxCartRaw) : null;
+
+  const maxQtyRaw = form.get("freebieMaxQuantity");
+  const freebieMaxQuantity = maxQtyRaw && String(maxQtyRaw).trim() !== "" ? parseInt(maxQtyRaw, 10) : null;
+
+  const freebieConditionLogic = String(form.get("freebieConditionLogic") || "AND");
+  const freebieTriggerCollectionIdsRaw = String(form.get("freebieTriggerCollectionIds") || "[]");
+  const triggerCollections = safeJSON(freebieTriggerCollectionIdsRaw, []);
+
+  let triggerProductsArr = safeJSON(String(form.get("freebieTriggerProductIds") || "[]"), []);
+
+  // Resolve collection product IDs and merge — works for all trigger types
+  if (triggerCollections.length > 0) {
+    for (const col of triggerCollections) {
+      try {
+        const colRes = await admin.graphql(
+          `#graphql
+          query GetCollectionProducts($id: ID!) {
+            collection(id: $id) {
+              products(first: 250) { nodes { id title } }
+            }
+          }`,
+          { variables: { id: col.id } }
+        );
+        const colJson = await colRes.json();
+        const colProducts = colJson.data?.collection?.products?.nodes || [];
+        for (const p of colProducts) {
+          if (!triggerProductsArr.find((e) => e.id === p.id)) {
+            triggerProductsArr.push({ id: p.id, title: p.title });
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
   const data = {
     freebieEnabled: form.get("freebieEnabled") === "true",
     freebieTitle: String(form.get("freebieTitle") || "🎁 You've earned a free gift!"),
-    freebieTriggerType: String(form.get("freebieTriggerType") || "cartValue"),
+    freebieTriggerType,
     freebieMinCartValue: parseFloat(form.get("freebieMinCartValue") || "100"),
+    freebieMaxCartValue,
     freebieMinQuantity: parseInt(form.get("freebieMinQuantity") || "3", 10),
-    freebieTriggerProductIds: String(form.get("freebieTriggerProductIds") || "[]"),
+    freebieMaxQuantity,
+    freebieConditionLogic,
+    freebieTriggerProductIds: JSON.stringify(triggerProductsArr),
+    freebieTriggerCollectionIds: freebieTriggerCollectionIdsRaw,
     freebieConfettiEnabled: form.get("freebieConfettiEnabled") === "true",
   };
 
@@ -222,8 +264,13 @@ export default function FreebieSettings() {
   const [title, setTitle] = useState(s.freebieTitle ?? "🎁 You've earned a free gift!");
   const [triggerType, setTriggerType] = useState(s.freebieTriggerType ?? "cartValue");
   const [minCartValue, setMinCartValue] = useState(s.freebieMinCartValue ?? 100);
+  const [maxCartValue, setMaxCartValue] = useState(s.freebieMaxCartValue ?? "");
   const [minQty, setMinQty] = useState(s.freebieMinQuantity ?? 3);
+  const [maxQty, setMaxQty] = useState(s.freebieMaxQuantity ?? "");
+  const [conditionLogic, setConditionLogic] = useState(s.freebieConditionLogic ?? "AND");
   const [triggerProducts, setTriggerProducts] = useState(() => safeJSON(s.freebieTriggerProductIds, []));
+  const [triggerCollections, setTriggerCollections] = useState(() => safeJSON(s.freebieTriggerCollectionIds, []));
+  const hasProductCondition = triggerProducts.length > 0 || triggerCollections.length > 0;
   const [freebieVariantId, setFreebieVariantId] = useState(s.freebieProductVariantId ?? "");
   const [freebieProductTitle, setFreebieProductTitle] = useState(s.freebieProductTitle ?? "");
   const [freebieProductImage, setFreebieProductImage] = useState(s.freebieProductImageUrl ?? "");
@@ -236,8 +283,12 @@ export default function FreebieSettings() {
     setTitle(s.freebieTitle ?? "🎁 You've earned a free gift!");
     setTriggerType(s.freebieTriggerType ?? "cartValue");
     setMinCartValue(s.freebieMinCartValue ?? 100);
+    setMaxCartValue(s.freebieMaxCartValue ?? "");
     setMinQty(s.freebieMinQuantity ?? 3);
+    setMaxQty(s.freebieMaxQuantity ?? "");
+    setConditionLogic(s.freebieConditionLogic ?? "AND");
     setTriggerProducts(safeJSON(s.freebieTriggerProductIds, []));
+    setTriggerCollections(safeJSON(s.freebieTriggerCollectionIds, []));
     setFreebieVariantId(s.freebieProductVariantId ?? "");
     setFreebieProductTitle(s.freebieProductTitle ?? "");
     setFreebieProductImage(s.freebieProductImageUrl ?? "");
@@ -290,6 +341,13 @@ export default function FreebieSettings() {
     }
   }
 
+  async function pickTriggerCollections() {
+    const selected = await shopify.resourcePicker({ type: "collection", multiple: true, action: "select" });
+    if (selected && selected.length > 0) {
+      setTriggerCollections(selected.map((c) => ({ id: c.id, title: c.title })));
+    }
+  }
+
   function handleSubmit(e) {
     e.preventDefault();
     fetcher.submit(
@@ -298,8 +356,12 @@ export default function FreebieSettings() {
         freebieTitle: title,
         freebieTriggerType: triggerType,
         freebieMinCartValue: String(minCartValue),
+        freebieMaxCartValue: maxCartValue !== "" && maxCartValue !== null ? String(maxCartValue) : "",
         freebieMinQuantity: String(minQty),
+        freebieMaxQuantity: maxQty !== "" && maxQty !== null ? String(maxQty) : "",
+        freebieConditionLogic: conditionLogic,
         freebieTriggerProductIds: JSON.stringify(triggerProducts),
+        freebieTriggerCollectionIds: JSON.stringify(triggerCollections),
         freebieProductVariantId: freebieVariantId,
         freebieProductTitle: freebieProductTitle,
         freebieProductImageUrl: freebieProductImage,
@@ -367,65 +429,133 @@ export default function FreebieSettings() {
       {enabled && (
         <s-section heading="Unlock Gift When…">
           <s-stack direction="block" gap="base">
+
+            {/* ── Primary trigger type ── */}
             <div>
-              <label style={labelStyle}>Trigger Condition</label>
-              <select
-                value={triggerType}
-                onChange={(e) => setTriggerType(e.target.value)}
-                style={selectStyle}
-              >
-                <option value="cartValue">Cart value reaches a minimum amount</option>
-                <option value="quantity">Cart contains minimum number of items</option>
-                <option value="product">Cart contains specific products</option>
+              <label style={labelStyle}>Primary Condition</label>
+              <select value={triggerType} onChange={(e) => setTriggerType(e.target.value)} style={selectStyle}>
+                <option value="cartValue">Cart value (set min and optional max)</option>
+                <option value="quantity">Item quantity (set min and optional max)</option>
+                <option value="product">Specific products or collections only</option>
               </select>
             </div>
 
+            {/* ── Cart value fields ── */}
             {triggerType === "cartValue" && (
-              <div>
-                <label style={labelStyle}>Minimum Cart Value ($)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={minCartValue}
-                  onChange={(e) => setMinCartValue(e.target.value)}
-                  style={{ ...inputStyle, width: 160 }}
-                />
-                <p style={helpText}>Show gift progress bar below this; unlock above it.</p>
-              </div>
-            )}
-
-            {triggerType === "quantity" && (
-              <div>
-                <label style={labelStyle}>Minimum Item Quantity</label>
-                <input
-                  type="number"
-                  min="1"
-                  value={minQty}
-                  onChange={(e) => setMinQty(e.target.value)}
-                  style={{ ...inputStyle, width: 120 }}
-                />
-                <p style={helpText}>Unlock free gift when cart has at least this many items.</p>
-              </div>
-            )}
-
-            {triggerType === "product" && (
-              <div>
-                <label style={labelStyle}>Trigger Products</label>
-                <p style={{ ...helpText, marginBottom: 10 }}>
-                  Unlock gift only when one of these products is in cart.
+              <>
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <label style={labelStyle}>Minimum ($)</label>
+                    <input type="number" min="0" step="0.01" value={minCartValue}
+                      onChange={(e) => setMinCartValue(e.target.value)}
+                      style={{ ...inputStyle, width: 150 }} />
+                    <p style={helpText}>Gift unlocks at or above this total.</p>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Maximum ($) <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
+                    <input type="number" min="0" step="0.01" value={maxCartValue}
+                      onChange={(e) => setMaxCartValue(e.target.value)}
+                      placeholder="No limit"
+                      style={{ ...inputStyle, width: 150 }} />
+                    <p style={helpText}>Gift stops above this total.</p>
+                  </div>
+                </div>
+                <p style={{ fontSize: 12, color: "#1773b0", margin: 0 }}>
+                  Cart total is the discounted amount (after applied discount codes).
                 </p>
-                <button type="button" onClick={pickTriggerProducts} style={pickerBtn}>
-                  + Select Trigger Products
-                </button>
-                {triggerProducts.length > 0 && (
-                  <ProductChips
-                    products={triggerProducts}
-                    onRemove={(id) => setTriggerProducts(triggerProducts.filter((p) => p.id !== id))}
-                  />
+              </>
+            )}
+
+            {/* ── Quantity fields ── */}
+            {triggerType === "quantity" && (
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div>
+                  <label style={labelStyle}>Minimum items</label>
+                  <input type="number" min="1" value={minQty}
+                    onChange={(e) => setMinQty(e.target.value)}
+                    style={{ ...inputStyle, width: 130 }} />
+                  <p style={helpText}>Gift unlocks at or above this quantity.</p>
+                </div>
+                <div>
+                  <label style={labelStyle}>Maximum items <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
+                  <input type="number" min="1" value={maxQty}
+                    onChange={(e) => setMaxQty(e.target.value)}
+                    placeholder="No limit"
+                    style={{ ...inputStyle, width: 130 }} />
+                  <p style={helpText}>Gift stops above this quantity.</p>
+                </div>
+              </div>
+            )}
+
+            {/* ── Product/Collection condition ──
+                For "product" trigger: this IS the condition.
+                For cartValue/quantity: this is an optional AND/OR second condition. */}
+            {triggerType !== "product" && (
+              <div style={{ borderTop: "1px solid #ebebeb", paddingTop: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <select value={conditionLogic} onChange={(e) => setConditionLogic(e.target.value)}
+                    style={{ ...selectStyle, width: "auto", padding: "7px 12px", fontWeight: 700, color: conditionLogic === "AND" ? "#008060" : "#c05717" }}>
+                    <option value="AND">AND</option>
+                    <option value="OR">OR</option>
+                  </select>
+                  <div>
+                    <strong style={{ fontSize: 13 }}>Also require products or collections</strong>
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "#888" }}>
+                      {conditionLogic === "AND"
+                        ? "Both the primary condition AND a matching product/collection must be met."
+                        : "The gift unlocks when EITHER the primary condition OR a matching product/collection is met."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Product + Collection pickers (shown for all trigger types) */}
+            {(triggerType === "product" || triggerType !== "product") && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14,
+                ...(triggerType !== "product" ? { background: "#f9f9fb", borderRadius: 10, padding: "14px 16px", border: "1px solid #ebebeb" } : {}) }}>
+
+                {triggerType === "product" && (
+                  <p style={{ margin: 0, fontSize: 13, color: "#555" }}>
+                    Gift unlocks when the cart contains any product from the selected products or collections.
+                  </p>
+                )}
+
+                <div>
+                  <label style={labelStyle}>Specific Products</label>
+                  <button type="button" onClick={pickTriggerProducts} style={pickerBtn}>+ Select Products</button>
+                  {triggerProducts.length > 0 && (
+                    <ProductChips products={triggerProducts}
+                      onRemove={(id) => setTriggerProducts(triggerProducts.filter((p) => p.id !== id))} />
+                  )}
+                  {triggerProducts.length === 0 && (
+                    <p style={{ ...helpText, marginTop: 8 }}>No products selected.</p>
+                  )}
+                </div>
+
+                <div style={{ borderTop: "1px solid #ebebeb", paddingTop: 14 }}>
+                  <label style={labelStyle}>Collections</label>
+                  <p style={{ ...helpText, marginBottom: 10 }}>
+                    Matches any product in these collections. List is resolved when you save.
+                  </p>
+                  <button type="button" onClick={pickTriggerCollections} style={pickerBtn}>+ Select Collections</button>
+                  {triggerCollections.length > 0 && (
+                    <ProductChips products={triggerCollections}
+                      onRemove={(id) => setTriggerCollections(triggerCollections.filter((c) => c.id !== id))} />
+                  )}
+                  {triggerCollections.length === 0 && (
+                    <p style={{ ...helpText, marginTop: 8 }}>No collections selected.</p>
+                  )}
+                </div>
+
+                {triggerType !== "product" && !hasProductCondition && (
+                  <p style={{ margin: 0, fontSize: 12, color: "#aaa" }}>
+                    Leave empty to use only the primary condition above.
+                  </p>
                 )}
               </div>
             )}
+
           </s-stack>
         </s-section>
       )}
