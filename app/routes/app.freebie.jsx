@@ -17,241 +17,193 @@ export const action = async ({ request }) => {
   const form = await request.formData();
   const intent = form.get("intent");
 
+  /* ── Create $0 freebie product ── */
   if (intent === "createFreebieProduct") {
     const sourceTitle = String(form.get("sourceTitle") || "Free Gift");
     const sourceImageUrl = form.get("sourceImageUrl") ? String(form.get("sourceImageUrl")) : null;
-
     try {
-    // Step 0: Find the Online Store publication ID so we can publish the product to storefront
-    let onlineStorePubId = null;
-    try {
-      const pubRes = await admin.graphql(`#graphql
-        query getPublications { publications(first: 20) { nodes { id name } } }`);
-      const pubJson = await pubRes.json();
-      const pubs = pubJson.data?.publications?.nodes || [];
-      const osPub = pubs.find((p) => p.name === "Online Store") || pubs[0];
-      onlineStorePubId = osPub?.id || null;
-    } catch (_) {}
-
-    // Step 1: Create the product
-    const createRes = await admin.graphql(
-      `#graphql
-      mutation createFreebieProduct($input: ProductCreateInput!) {
-        productCreate(product: $input) {
-          product {
-            id
-            variants(first: 1) { edges { node { id } } }
-            featuredImage { url }
-          }
-          userErrors { field message }
-        }
-      }`,
-      {
-        variables: {
-          input: {
-            title: `${sourceTitle} — Free Gift`,
-            status: "ACTIVE",
-            // edge-cart-hidden lets merchants use Search & Discovery app to exclude this tag
-            tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"],
-          },
-        },
-      }
-    );
-
-    const createJson = await createRes.json();
-    const createErrors = createJson.data?.productCreate?.userErrors;
-    if (createErrors?.length) return { error: createErrors[0].message };
-
-    const product = createJson.data?.productCreate?.product;
-    const variantId = product?.variants?.edges?.[0]?.node?.id;
-    const productId = product?.id;
-    let imageUrl = sourceImageUrl || null;
-
-    if (!variantId || !productId) return { error: "Failed to create freebie product." };
-
-    // Step 1b: Attach source image to the new product so it shows in cart line items
-    if (sourceImageUrl) {
-      try {
-        const mediaRes = await admin.graphql(
-          `#graphql
-          mutation attachFreebieImage($productId: ID!, $media: [CreateMediaInput!]!) {
-            productCreateMedia(productId: $productId, media: $media) {
-              media {
-                ... on MediaImage {
-                  image { url }
-                }
-              }
-              mediaUserErrors { field message }
-            }
-          }`,
-          {
-            variables: {
-              productId,
-              media: [{ mediaContentType: "IMAGE", originalSource: sourceImageUrl, alt: sourceTitle + " — Free Gift" }],
-            },
-          }
-        );
-        const mediaJson = await mediaRes.json();
-        const attachedUrl = mediaJson.data?.productCreateMedia?.media?.[0]?.image?.url;
-        if (attachedUrl) imageUrl = attachedUrl;
-      } catch (_) {}
-    }
-
-    // Step 2: Set variant price to $0.00 + always allow purchase (inventoryPolicy: CONTINUE)
-    const updateRes = await admin.graphql(
-      `#graphql
-      mutation updateFreebieVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-        productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-          productVariants { id price }
-          userErrors { field message }
-        }
-      }`,
-      {
-        variables: {
-          productId,
-          variants: [{ id: variantId, price: "0.00", inventoryPolicy: "CONTINUE" }],
-        },
-      }
-    );
-    const updateJson = await updateRes.json();
-    const updateErrors = updateJson.data?.productVariantsBulkUpdate?.userErrors;
-    if (updateErrors?.length) return { error: updateErrors[0].message };
-
-    // Step 3: Publish to Online Store so the storefront /cart/add.js can add it
-    if (onlineStorePubId) {
-      try {
-        await admin.graphql(
-          `#graphql
-          mutation publishFreebie($id: ID!, $input: PublishablePublishInput!) {
-            publishablePublish(id: $id, input: $input) {
-              userErrors { field message }
-            }
-          }`,
-          { variables: { id: productId, input: { publicationIds: [onlineStorePubId] } } }
-        );
-      } catch (_) {}
-    }
-
-    // Step 4: Set seo.hidden metafield — Shopify OS 2.0 standard to noindex the product
-    // page and exclude it from Search & Discovery / Google Shopping results.
-    try {
-      await admin.graphql(
+      const createRes = await admin.graphql(
         `#graphql
-        mutation setFreebieMetafields($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
+        mutation createFreebieProduct($input: ProductCreateInput!) {
+          productCreate(product: $input) {
+            product {
+              id
+              variants(first: 1) { edges { node { id } } }
+              featuredImage { url }
+            }
             userErrors { field message }
           }
         }`,
-        {
-          variables: {
-            metafields: [
-              {
-                ownerId: productId,
-                namespace: "seo",
-                key: "hidden",
-                value: "1",
-                type: "number_integer",
-              },
-            ],
-          },
-        }
+        { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"] } } }
       );
-    } catch (_) {}
+      const createJson = await createRes.json();
+      const createErrors = createJson.data?.productCreate?.userErrors;
+      if (createErrors?.length) return { error: createErrors[0].message };
 
-    await prisma.cartSettings.upsert({
-      where: { shop },
-      create: { shop, freebieProductVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl },
-      update: { freebieProductVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl },
-    });
+      const product = createJson.data?.productCreate?.product;
+      const variantId = product?.variants?.edges?.[0]?.node?.id;
+      const productId = product?.id;
+      let imageUrl = sourceImageUrl || null;
+      if (!variantId || !productId) return { error: "Failed to create freebie product." };
 
-    return {
-      success: true,
-      message: "Free gift product created and saved!",
-      freebieVariantId: variantId,
-      freebieProductTitle: sourceTitle,
-      freebieProductImageUrl: imageUrl,
-    };
+      if (sourceImageUrl) {
+        try {
+          const mediaRes = await admin.graphql(
+            `#graphql
+            mutation attachFreebieImage($productId: ID!, $media: [CreateMediaInput!]!) {
+              productCreateMedia(productId: $productId, media: $media) {
+                media { ... on MediaImage { image { url } } }
+                mediaUserErrors { field message }
+              }
+            }`,
+            { variables: { productId, media: [{ mediaContentType: "IMAGE", originalSource: sourceImageUrl, alt: sourceTitle + " — Free Gift" }] } }
+          );
+          const mediaJson = await mediaRes.json();
+          const attachedUrl = mediaJson.data?.productCreateMedia?.media?.[0]?.image?.url;
+          if (attachedUrl) imageUrl = attachedUrl;
+        } catch (_) {}
+      }
+
+      await admin.graphql(
+        `#graphql
+        mutation updateFreebieVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            productVariants { id price }
+            userErrors { field message }
+          }
+        }`,
+        { variables: { productId, variants: [{ id: variantId, price: "0.00", inventoryPolicy: "CONTINUE" }] } }
+      );
+
+      /* Publish to Online Store — required for /cart/add.js to accept the variant.
+         The product is hidden from discovery via noindex tag + seo.hidden metafield below. */
+      try {
+        const pubRes = await admin.graphql(
+          `#graphql query getPublications { publications(first: 20) { nodes { id name } } }`
+        );
+        const pubJson = await pubRes.json();
+        const pubs = pubJson.data?.publications?.nodes || [];
+        const osPub = pubs.find((p) => p.name === "Online Store") || pubs[0];
+        if (osPub?.id) {
+          await admin.graphql(
+            `#graphql
+            mutation publishFreebie($id: ID!, $input: PublishablePublishInput!) {
+              publishablePublish(id: $id, input: $input) { userErrors { field message } }
+            }`,
+            { variables: { id: productId, input: { publicationIds: [osPub.id] } } }
+          );
+        }
+      } catch (_) {}
+
+      /* Hide from search engines, sitemap, and theme search */
+      try {
+        await admin.graphql(
+          `#graphql
+          mutation setFreebieMetafields($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) { userErrors { field message } }
+          }`,
+          { variables: { metafields: [{ ownerId: productId, namespace: "seo", key: "hidden", value: "1", type: "number_integer" }] } }
+        );
+      } catch (_) {}
+
+      // Return product data — the client updates the offer state; user clicks Save to persist
+      return { success: true, freebieVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl };
     } catch (err) {
-      console.error("[EdgeCart] Freebie creation error:", err);
       const msg = String(err?.message || "");
       if (msg.includes("access token") || msg.includes("Missing access token")) {
-        return {
-          error:
-            "Session expired — please refresh the page and try again. If the error persists, re-install the app from your Shopify Partner Dashboard.",
-        };
+        return { error: "Session expired — please refresh the page and try again." };
       }
       return { error: msg || "Failed to create freebie product. Please try again." };
     }
   }
 
-  // Save freebie settings
-  const freebieTriggerType = String(form.get("freebieTriggerType") || "cartValue");
+  /* ── Save all offers ── */
+  const offersRaw = String(form.get("freebieOffers") || "[]");
+  let offers = safeJSON(offersRaw, []);
 
-  const maxCartRaw = form.get("freebieMaxCartValue");
-  const freebieMaxCartValue = maxCartRaw && String(maxCartRaw).trim() !== "" ? parseFloat(maxCartRaw) : null;
-
-  const maxQtyRaw = form.get("freebieMaxQuantity");
-  const freebieMaxQuantity = maxQtyRaw && String(maxQtyRaw).trim() !== "" ? parseInt(maxQtyRaw, 10) : null;
-
-  const freebieConditionLogic = String(form.get("freebieConditionLogic") || "AND");
-  const freebieTriggerCollectionIdsRaw = String(form.get("freebieTriggerCollectionIds") || "[]");
-  const triggerCollections = safeJSON(freebieTriggerCollectionIdsRaw, []);
-
-  let triggerProductsArr = safeJSON(String(form.get("freebieTriggerProductIds") || "[]"), []);
-
-  // Resolve collection product IDs and merge — works for all trigger types
-  if (triggerCollections.length > 0) {
-    for (const col of triggerCollections) {
+  // Resolve collection product IDs for each offer at save time
+  for (const offer of offers) {
+    const cols = offer.triggerCollectionIds || [];
+    if (cols.length === 0) continue;
+    for (const col of cols) {
       try {
         const colRes = await admin.graphql(
           `#graphql
           query GetCollectionProducts($id: ID!) {
-            collection(id: $id) {
-              products(first: 250) { nodes { id title } }
-            }
+            collection(id: $id) { products(first: 250) { nodes { id title } } }
           }`,
           { variables: { id: col.id } }
         );
         const colJson = await colRes.json();
         const colProducts = colJson.data?.collection?.products?.nodes || [];
         for (const p of colProducts) {
-          if (!triggerProductsArr.find((e) => e.id === p.id)) {
-            triggerProductsArr.push({ id: p.id, title: p.title });
+          if (!(offer.triggerProductIds || []).find((e) => e.id === p.id)) {
+            offer.triggerProductIds = [...(offer.triggerProductIds || []), { id: p.id, title: p.title }];
           }
         }
       } catch (_) {}
     }
   }
 
-  const data = {
-    freebieEnabled: form.get("freebieEnabled") === "true",
-    freebieTitle: String(form.get("freebieTitle") || "🎁 You've earned a free gift!"),
-    freebieTriggerType,
-    freebieMinCartValue: parseFloat(form.get("freebieMinCartValue") || "100"),
-    freebieMaxCartValue,
-    freebieMinQuantity: parseInt(form.get("freebieMinQuantity") || "3", 10),
-    freebieMaxQuantity,
-    freebieConditionLogic,
-    freebieTriggerProductIds: JSON.stringify(triggerProductsArr),
-    freebieTriggerCollectionIds: freebieTriggerCollectionIdsRaw,
-    freebieConfettiEnabled: form.get("freebieConfettiEnabled") === "true",
-  };
+  try {
+    await prisma.cartSettings.upsert({
+      where: { shop },
+      create: { shop, freebieOffers: JSON.stringify(offers) },
+      update: { freebieOffers: JSON.stringify(offers) },
+    });
+  } catch (err) {
+    return { error: "Save failed: " + (err?.message || "please try again") };
+  }
 
-  const fvId = form.get("freebieProductVariantId");
-  const fvTitle = form.get("freebieProductTitle");
-  const fvImage = form.get("freebieProductImageUrl");
-  data.freebieProductVariantId = fvId ? String(fvId) : null;
-  data.freebieProductTitle = fvTitle ? String(fvTitle) : null;
-  data.freebieProductImageUrl = fvImage ? String(fvImage) : null;
-
-  await prisma.cartSettings.upsert({
-    where: { shop },
-    create: { shop, ...data },
-    update: data,
-  });
-
-  return { success: true, message: "Freebie settings saved!" };
+  return { success: true, message: "All freebie offers saved!" };
 };
+
+/* ─────────────────────────────────────────────────────────── */
+
+function makeOffer() {
+  return {
+    id: "offer_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+    enabled: true,
+    title: "🎁 You've earned a free gift!",
+    triggerType: "cartValue",
+    minCartValue: 100,
+    maxCartValue: null,
+    minQuantity: 3,
+    maxQuantity: null,
+    conditionLogic: "AND",
+    triggerProductIds: [],
+    triggerCollectionIds: [],
+    productVariantId: null,
+    productTitle: null,
+    productImageUrl: null,
+    confettiEnabled: true,
+  };
+}
+
+function initOffers(s) {
+  if (!s) return [];
+  const offers = safeJSON(s.freebieOffers || "[]", []);
+  if (offers.length > 0) return offers;
+  // Backwards compat: migrate old single-offer fields
+  if (!s.freebieProductVariantId) return [];
+  return [{
+    id: "legacy",
+    enabled: s.freebieEnabled ?? true,
+    title: s.freebieTitle ?? "🎁 You've earned a free gift!",
+    triggerType: s.freebieTriggerType ?? "cartValue",
+    minCartValue: s.freebieMinCartValue ?? 100,
+    maxCartValue: s.freebieMaxCartValue ?? null,
+    minQuantity: s.freebieMinQuantity ?? 3,
+    maxQuantity: s.freebieMaxQuantity ?? null,
+    conditionLogic: s.freebieConditionLogic ?? "AND",
+    triggerProductIds: safeJSON(s.freebieTriggerProductIds || "[]", []),
+    triggerCollectionIds: safeJSON(s.freebieTriggerCollectionIds || "[]", []),
+    productVariantId: s.freebieProductVariantId,
+    productTitle: s.freebieProductTitle,
+    productImageUrl: s.freebieProductImageUrl,
+    confettiEnabled: s.freebieConfettiEnabled ?? true,
+  }];
+}
 
 export default function FreebieSettings() {
   const { settings } = useLoaderData();
@@ -260,439 +212,440 @@ export default function FreebieSettings() {
   const saving = fetcher.state !== "idle";
   const s = settings || {};
 
-  const [enabled, setEnabled] = useState(s.freebieEnabled ?? false);
-  const [title, setTitle] = useState(s.freebieTitle ?? "🎁 You've earned a free gift!");
-  const [triggerType, setTriggerType] = useState(s.freebieTriggerType ?? "cartValue");
-  const [minCartValue, setMinCartValue] = useState(s.freebieMinCartValue ?? 100);
-  const [maxCartValue, setMaxCartValue] = useState(s.freebieMaxCartValue ?? "");
-  const [minQty, setMinQty] = useState(s.freebieMinQuantity ?? 3);
-  const [maxQty, setMaxQty] = useState(s.freebieMaxQuantity ?? "");
-  const [conditionLogic, setConditionLogic] = useState(s.freebieConditionLogic ?? "AND");
-  const [triggerProducts, setTriggerProducts] = useState(() => safeJSON(s.freebieTriggerProductIds, []));
-  const [triggerCollections, setTriggerCollections] = useState(() => safeJSON(s.freebieTriggerCollectionIds, []));
-  const hasProductCondition = triggerProducts.length > 0 || triggerCollections.length > 0;
-  const [freebieVariantId, setFreebieVariantId] = useState(s.freebieProductVariantId ?? "");
-  const [freebieProductTitle, setFreebieProductTitle] = useState(s.freebieProductTitle ?? "");
-  const [freebieProductImage, setFreebieProductImage] = useState(s.freebieProductImageUrl ?? "");
-  const [confettiEnabled, setConfettiEnabled] = useState(s.freebieConfettiEnabled ?? true);
-  const [creating, setCreating] = useState(false);
+  const [offers, setOffers] = useState(() => initOffers(s));
+  const [expandedId, setExpandedId] = useState(null);
+  const [creatingForId, setCreatingForId] = useState(null);
 
-  /* Sync state when React Router revalidates the loader after an action */
-  useEffect(() => {
-    setEnabled(s.freebieEnabled ?? false);
-    setTitle(s.freebieTitle ?? "🎁 You've earned a free gift!");
-    setTriggerType(s.freebieTriggerType ?? "cartValue");
-    setMinCartValue(s.freebieMinCartValue ?? 100);
-    setMaxCartValue(s.freebieMaxCartValue ?? "");
-    setMinQty(s.freebieMinQuantity ?? 3);
-    setMaxQty(s.freebieMaxQuantity ?? "");
-    setConditionLogic(s.freebieConditionLogic ?? "AND");
-    setTriggerProducts(safeJSON(s.freebieTriggerProductIds, []));
-    setTriggerCollections(safeJSON(s.freebieTriggerCollectionIds, []));
-    setFreebieVariantId(s.freebieProductVariantId ?? "");
-    setFreebieProductTitle(s.freebieProductTitle ?? "");
-    setFreebieProductImage(s.freebieProductImageUrl ?? "");
-    setConfettiEnabled(s.freebieConfettiEnabled ?? true);
-  }, [settings]);
+  /* NOTE: no useEffect resetting offers on settings change — that would wipe
+     newly-added offers whenever any fetcher action triggers loader revalidation. */
 
   useEffect(() => {
-    if (fetcher.data?.success) {
-      shopify.toast.show(fetcher.data.message || "Saved!");
-      if (fetcher.data.freebieVariantId) {
-        setFreebieVariantId(fetcher.data.freebieVariantId);
-        setFreebieProductTitle(fetcher.data.freebieProductTitle || "");
-        setFreebieProductImage(fetcher.data.freebieProductImageUrl || "");
-      }
-      setCreating(false);
-    }
-    if (fetcher.data?.error) {
+    if (!fetcher.data) return;
+    if (fetcher.data.error) {
       shopify.toast.show(fetcher.data.error, { isError: true });
-      setCreating(false);
+      setCreatingForId(null);
+      return;
+    }
+    if (fetcher.data.success && fetcher.data.freebieVariantId && creatingForId) {
+      setOffers((prev) =>
+        prev.map((o) =>
+          o.id === creatingForId
+            ? { ...o, productVariantId: fetcher.data.freebieVariantId, productTitle: fetcher.data.freebieProductTitle, productImageUrl: fetcher.data.freebieProductImageUrl }
+            : o
+        )
+      );
+      setCreatingForId(null);
+      shopify.toast.show("Free gift product created! Click Save Settings to keep it.");
+    } else if (fetcher.data.success && !fetcher.data.freebieVariantId) {
+      shopify.toast.show(fetcher.data.message || "Saved!");
     }
   }, [fetcher.data]);
 
-  async function pickAndCreateFreebieProduct() {
+  function addOffer() {
+    if (offers.length >= 5) return;
+    const o = makeOffer();
+    setOffers([...offers, o]);
+    setExpandedId(o.id);
+  }
+
+  function removeOffer(id) {
+    const updated = offers.filter((o) => o.id !== id);
+    setOffers(updated);
+    fetcher.submit({ freebieOffers: JSON.stringify(updated) }, { method: "POST" });
+  }
+
+  function updateOffer(id, changes) {
+    setOffers(offers.map((o) => (o.id === id ? { ...o, ...changes } : o)));
+  }
+
+  async function createFreebieProduct(offerId) {
     const selected = await shopify.resourcePicker({ type: "product", multiple: false, action: "select" });
-    if (!selected || !selected.length) return;
+    if (!selected?.length) return;
     const p = selected[0];
-    // Try every possible field name the App Bridge SDK might use for the image URL
-    const imgUrl =
-      p.featuredImage?.url ||
-      p.featuredImage?.originalSrc ||
-      p.images?.[0]?.url ||
-      p.images?.[0]?.originalSrc ||
-      p.images?.[0]?.src ||
-      "";
-    setCreating(true);
-    fetcher.submit(
-      {
-        intent: "createFreebieProduct",
-        sourceTitle: p.title,
-        sourceImageUrl: imgUrl,
-      },
-      { method: "POST" }
-    );
+    const imgUrl = p.featuredImage?.url || p.images?.[0]?.url || p.images?.[0]?.originalSrc || "";
+    setCreatingForId(offerId);
+    fetcher.submit({ intent: "createFreebieProduct", sourceTitle: p.title, sourceImageUrl: imgUrl }, { method: "POST" });
   }
 
-  async function pickTriggerProducts() {
+  async function pickProducts(offerId) {
     const selected = await shopify.resourcePicker({ type: "product", multiple: 10, action: "select" });
-    if (selected && selected.length > 0) {
-      setTriggerProducts(selected.map((p) => ({ id: p.id, title: p.title })));
+    if (selected?.length) {
+      updateOffer(offerId, {
+        triggerProductIds: selected.map((p) => ({
+          id: p.id,
+          title: p.title,
+          imageUrl: p.featuredImage?.url || p.images?.[0]?.url || p.images?.[0]?.originalSrc || "",
+        })),
+      });
     }
   }
 
-  async function pickTriggerCollections() {
+  async function pickCollections(offerId) {
     const selected = await shopify.resourcePicker({ type: "collection", multiple: true, action: "select" });
-    if (selected && selected.length > 0) {
-      setTriggerCollections(selected.map((c) => ({ id: c.id, title: c.title })));
+    if (selected?.length) {
+      updateOffer(offerId, {
+        triggerCollectionIds: selected.map((c) => ({
+          id: c.id,
+          title: c.title,
+          imageUrl: c.image?.url || c.image?.src || "",
+        })),
+      });
     }
   }
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    fetcher.submit(
-      {
-        freebieEnabled: String(enabled),
-        freebieTitle: title,
-        freebieTriggerType: triggerType,
-        freebieMinCartValue: String(minCartValue),
-        freebieMaxCartValue: maxCartValue !== "" && maxCartValue !== null ? String(maxCartValue) : "",
-        freebieMinQuantity: String(minQty),
-        freebieMaxQuantity: maxQty !== "" && maxQty !== null ? String(maxQty) : "",
-        freebieConditionLogic: conditionLogic,
-        freebieTriggerProductIds: JSON.stringify(triggerProducts),
-        freebieTriggerCollectionIds: JSON.stringify(triggerCollections),
-        freebieProductVariantId: freebieVariantId,
-        freebieProductTitle: freebieProductTitle,
-        freebieProductImageUrl: freebieProductImage,
-        freebieConfettiEnabled: String(confettiEnabled),
-      },
-      { method: "POST" }
-    );
+  function handleSave() {
+    fetcher.submit({ freebieOffers: JSON.stringify(offers) }, { method: "POST" });
   }
-
-  const hasFreebieProduct = !!freebieVariantId;
 
   return (
     <s-page heading="Free Gift (Freebie) Settings">
-      <s-button
-        slot="primary-action"
-        onClick={handleSubmit}
-        variant="primary"
-        loading={saving && !creating ? true : undefined}
-      >
-        Save Freebie Settings
+      <s-button slot="primary-action" onClick={handleSave} variant="primary" loading={saving && !creatingForId ? true : undefined}>
+        Save Settings
       </s-button>
 
-      {/* Enable toggle */}
-      <s-section heading="Free Gift Feature">
+      <s-section heading="Free Gift Offers">
         <s-stack direction="block" gap="base">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <strong style={{ fontSize: 14 }}>Enable Free Gift</strong>
-              <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
-                Offer a free product when customers reach a spending or quantity threshold.
-              </p>
-            </div>
-            <ToggleSwitch value={enabled} onChange={setEnabled} />
-          </div>
+          <p style={{ margin: 0, fontSize: 13, color: "#555" }}>
+            Create up to <strong>5 independent free gift offers</strong>. Each has its own trigger condition and gift product. All active offers run simultaneously.
+          </p>
 
-          {enabled && (
-            <>
-              <div>
-                <label style={labelStyle}>Gift Banner Text</label>
-                <input
-                  type="text"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  style={inputStyle}
-                  placeholder="🎁 You've earned a free gift!"
-                />
-                <p style={helpText}>Shown inside the side cart when the gift is unlocked.</p>
-              </div>
+          {offers.length === 0 && (
+            <p style={{ fontSize: 13, color: "#999", margin: 0 }}>No offers yet. Click "+ Add Offer" to create your first free gift.</p>
+          )}
 
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <strong style={{ fontSize: 14 }}>Confetti Animation</strong>
-                  <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
-                    Show a confetti burst when the free gift is added to cart.
-                  </p>
-                </div>
-                <ToggleSwitch value={confettiEnabled} onChange={setConfettiEnabled} />
-              </div>
-            </>
+          {offers.map((offer, idx) => (
+            <OfferCard
+              key={offer.id}
+              offer={offer}
+              index={idx}
+              expanded={expandedId === offer.id}
+              creating={creatingForId === offer.id}
+              saving={saving && !creatingForId}
+              onToggle={() => setExpandedId(expandedId === offer.id ? null : offer.id)}
+              onUpdate={(ch) => updateOffer(offer.id, ch)}
+              onRemove={() => removeOffer(offer.id)}
+              onSave={handleSave}
+              onCreateProduct={() => createFreebieProduct(offer.id)}
+              onPickProducts={() => pickProducts(offer.id)}
+              onPickCollections={() => pickCollections(offer.id)}
+            />
+          ))}
+
+          {offers.length < 5 && (
+            <button type="button" onClick={addOffer} style={addOfferBtn}>
+              + Add Offer ({offers.length}/5)
+            </button>
           )}
         </s-stack>
       </s-section>
 
-      {/* Trigger condition */}
-      {enabled && (
-        <s-section heading="Unlock Gift When…">
-          <s-stack direction="block" gap="base">
-
-            {/* ── Primary trigger type ── */}
-            <div>
-              <label style={labelStyle}>Primary Condition</label>
-              <select value={triggerType} onChange={(e) => setTriggerType(e.target.value)} style={selectStyle}>
-                <option value="cartValue">Cart value (set min and optional max)</option>
-                <option value="quantity">Item quantity (set min and optional max)</option>
-                <option value="product">Specific products or collections only</option>
-              </select>
-            </div>
-
-            {/* ── Cart value fields ── */}
-            {triggerType === "cartValue" && (
-              <>
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                  <div>
-                    <label style={labelStyle}>Minimum ($)</label>
-                    <input type="number" min="0" step="0.01" value={minCartValue}
-                      onChange={(e) => setMinCartValue(e.target.value)}
-                      style={{ ...inputStyle, width: 150 }} />
-                    <p style={helpText}>Gift unlocks at or above this total.</p>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Maximum ($) <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
-                    <input type="number" min="0" step="0.01" value={maxCartValue}
-                      onChange={(e) => setMaxCartValue(e.target.value)}
-                      placeholder="No limit"
-                      style={{ ...inputStyle, width: 150 }} />
-                    <p style={helpText}>Gift stops above this total.</p>
-                  </div>
-                </div>
-                <p style={{ fontSize: 12, color: "#1773b0", margin: 0 }}>
-                  Cart total is the discounted amount (after applied discount codes).
-                </p>
-              </>
-            )}
-
-            {/* ── Quantity fields ── */}
-            {triggerType === "quantity" && (
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <div>
-                  <label style={labelStyle}>Minimum items</label>
-                  <input type="number" min="1" value={minQty}
-                    onChange={(e) => setMinQty(e.target.value)}
-                    style={{ ...inputStyle, width: 130 }} />
-                  <p style={helpText}>Gift unlocks at or above this quantity.</p>
-                </div>
-                <div>
-                  <label style={labelStyle}>Maximum items <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
-                  <input type="number" min="1" value={maxQty}
-                    onChange={(e) => setMaxQty(e.target.value)}
-                    placeholder="No limit"
-                    style={{ ...inputStyle, width: 130 }} />
-                  <p style={helpText}>Gift stops above this quantity.</p>
-                </div>
-              </div>
-            )}
-
-            {/* ── Product/Collection condition ──
-                For "product" trigger: this IS the condition.
-                For cartValue/quantity: this is an optional AND/OR second condition. */}
-            {triggerType !== "product" && (
-              <div style={{ borderTop: "1px solid #ebebeb", paddingTop: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <select value={conditionLogic} onChange={(e) => setConditionLogic(e.target.value)}
-                    style={{ ...selectStyle, width: "auto", padding: "7px 12px", fontWeight: 700, color: conditionLogic === "AND" ? "#008060" : "#c05717" }}>
-                    <option value="AND">AND</option>
-                    <option value="OR">OR</option>
-                  </select>
-                  <div>
-                    <strong style={{ fontSize: 13 }}>Also require products or collections</strong>
-                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "#888" }}>
-                      {conditionLogic === "AND"
-                        ? "Both the primary condition AND a matching product/collection must be met."
-                        : "The gift unlocks when EITHER the primary condition OR a matching product/collection is met."}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Product + Collection pickers (shown for all trigger types) */}
-            {(triggerType === "product" || triggerType !== "product") && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14,
-                ...(triggerType !== "product" ? { background: "#f9f9fb", borderRadius: 10, padding: "14px 16px", border: "1px solid #ebebeb" } : {}) }}>
-
-                {triggerType === "product" && (
-                  <p style={{ margin: 0, fontSize: 13, color: "#555" }}>
-                    Gift unlocks when the cart contains any product from the selected products or collections.
-                  </p>
-                )}
-
-                <div>
-                  <label style={labelStyle}>Specific Products</label>
-                  <button type="button" onClick={pickTriggerProducts} style={pickerBtn}>+ Select Products</button>
-                  {triggerProducts.length > 0 && (
-                    <ProductChips products={triggerProducts}
-                      onRemove={(id) => setTriggerProducts(triggerProducts.filter((p) => p.id !== id))} />
-                  )}
-                  {triggerProducts.length === 0 && (
-                    <p style={{ ...helpText, marginTop: 8 }}>No products selected.</p>
-                  )}
-                </div>
-
-                <div style={{ borderTop: "1px solid #ebebeb", paddingTop: 14 }}>
-                  <label style={labelStyle}>Collections</label>
-                  <p style={{ ...helpText, marginBottom: 10 }}>
-                    Matches any product in these collections. List is resolved when you save.
-                  </p>
-                  <button type="button" onClick={pickTriggerCollections} style={pickerBtn}>+ Select Collections</button>
-                  {triggerCollections.length > 0 && (
-                    <ProductChips products={triggerCollections}
-                      onRemove={(id) => setTriggerCollections(triggerCollections.filter((c) => c.id !== id))} />
-                  )}
-                  {triggerCollections.length === 0 && (
-                    <p style={{ ...helpText, marginTop: 8 }}>No collections selected.</p>
-                  )}
-                </div>
-
-                {triggerType !== "product" && !hasProductCondition && (
-                  <p style={{ margin: 0, fontSize: 12, color: "#aaa" }}>
-                    Leave empty to use only the primary condition above.
-                  </p>
-                )}
-              </div>
-            )}
-
-          </s-stack>
-        </s-section>
-      )}
-
-      {/* Free gift product selection */}
-      {enabled && (
-        <s-section heading="Free Gift Product">
-          <s-stack direction="block" gap="base">
-            {creating ? (
-              <div style={{ padding: "20px 0", textAlign: "center", color: "#555" }}>
-                <p style={{ margin: 0, fontSize: 14 }}>Creating free gift product on Shopify…</p>
-                <p style={{ margin: "6px 0 0", fontSize: 12, color: "#999" }}>This takes a few seconds.</p>
-              </div>
-            ) : hasFreebieProduct ? (
-              <div style={productCard}>
-                {freebieProductImage && (
-                  <img
-                    src={freebieProductImage}
-                    alt={freebieProductTitle}
-                    style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover" }}
-                  />
-                )}
-                <div style={{ flex: 1 }}>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{freebieProductTitle}</p>
-                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "#008060", fontWeight: 600 }}>
-                    ✓ Free gift product ready ($0.00)
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFreebieVariantId("");
-                    setFreebieProductTitle("");
-                    setFreebieProductImage("");
-                  }}
-                  style={removeBtn}
-                >
-                  Change
-                </button>
-              </div>
-            ) : (
-              <>
-                <p style={{ fontSize: 13, color: "#555", margin: 0 }}>
-                  Select any product from your store. EdgeCart will automatically create a{" "}
-                  <strong>$0.00 copy</strong> of it that gets added to customers' carts as the free gift.
-                </p>
-                <button type="button" onClick={pickAndCreateFreebieProduct} style={pickerBtn}>
-                  + Select Free Gift Product
-                </button>
-              </>
-            )}
-          </s-stack>
-        </s-section>
-      )}
-
       <s-section slot="aside" heading="Free Gift Tips">
         <s-stack direction="block" gap="base">
-          <s-paragraph>
-            The free gift creates a{" "}
-            <s-text fontWeight="bold">progress bar</s-text> in the side cart showing customers how
-            close they are to unlocking the reward.
-          </s-paragraph>
-          <s-paragraph>
-            Once unlocked, a one-tap{" "}
-            <s-text fontWeight="bold">"Add Free Gift"</s-text> button appears.
-          </s-paragraph>
-          <s-paragraph>
-            <s-text fontWeight="bold">Tip:</s-text> Set the threshold slightly above your average
-            order value to encourage higher spending.
-          </s-paragraph>
+          <s-paragraph>Each offer runs <s-text fontWeight="bold">independently</s-text> — a customer can unlock multiple gifts at once.</s-paragraph>
+          <s-paragraph>Use <s-text fontWeight="bold">AND</s-text> to combine a cart value threshold with a specific product condition.</s-paragraph>
+          <s-paragraph>Use <s-text fontWeight="bold">OR</s-text> to unlock the gift via either condition alone.</s-paragraph>
+          <s-paragraph><s-text fontWeight="bold">Tip:</s-text> After selecting a gift product, click <s-text fontWeight="bold">Save Settings</s-text> to keep it.</s-paragraph>
         </s-stack>
       </s-section>
     </s-page>
   );
 }
 
+/* ── Offer Card ────────────────────────────────────────────── */
+function OfferCard({ offer, index, expanded, creating, saving, onToggle, onUpdate, onRemove, onSave, onCreateProduct, onPickProducts, onPickCollections }) {
+  const hasProduct = !!offer.productVariantId;
+
+  return (
+    <div style={{ border: "1.5px solid #e0e0e0", borderRadius: 12, overflow: "hidden", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+
+      {/* Card header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px",
+        background: offer.enabled ? "#f0faf5" : "#fafafa", borderBottom: expanded ? "1.5px solid #e8e8e8" : "none" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <ToggleSwitch value={offer.enabled} onChange={(v) => onUpdate({ enabled: v })} />
+          <div>
+            <span style={{ fontSize: 14, fontWeight: 700, color: offer.enabled ? "#008060" : "#888" }}>
+              Offer {index + 1}
+            </span>
+            {offer.productTitle && (
+              <span style={{ fontSize: 12, color: "#666", marginLeft: 6 }}>— {offer.productTitle}</span>
+            )}
+            {!offer.productTitle && (
+              <span style={{ fontSize: 12, color: "#bbb", marginLeft: 6 }}>no gift product set</span>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={onToggle} style={editBtn}>{expanded ? "↑ Collapse" : "✏ Edit"}</button>
+          <button type="button" onClick={onRemove} style={deleteBtn}>✕ Delete</button>
+        </div>
+      </div>
+
+      {/* Expanded settings */}
+      {expanded && (
+        <div style={{ padding: "20px 18px", display: "flex", flexDirection: "column", gap: 22 }}>
+
+          {/* Banner text + confetti */}
+          <section>
+            <SectionHeading>Display</SectionHeading>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={labelStyle}>Gift Banner Text</label>
+                <input type="text" value={offer.title} onChange={(e) => onUpdate({ title: e.target.value })}
+                  style={inputStyle} placeholder="🎁 You've earned a free gift!" />
+                <p style={helpText}>Shown in the side cart when the gift is unlocked.</p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "12px 14px", background: "#fafafa", borderRadius: 10, border: "1px solid #ebebeb" }}>
+                <div>
+                  <strong style={{ fontSize: 13 }}>Confetti Animation</strong>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "#888" }}>Show confetti burst when the gift is added to cart.</p>
+                </div>
+                <ToggleSwitch value={offer.confettiEnabled} onChange={(v) => onUpdate({ confettiEnabled: v })} />
+              </div>
+            </div>
+          </section>
+
+          {/* Trigger condition */}
+          <section style={{ borderTop: "1px solid #f0f0f0", paddingTop: 20 }}>
+            <SectionHeading>Trigger Condition</SectionHeading>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Primary Condition</label>
+              <select value={offer.triggerType} onChange={(e) => onUpdate({ triggerType: e.target.value })} style={selectStyle}>
+                <option value="cartValue">Cart value (min and optional max)</option>
+                <option value="quantity">Item quantity (min and optional max)</option>
+                <option value="product">Specific products or collections only</option>
+              </select>
+            </div>
+
+            {offer.triggerType === "cartValue" && (
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+                <div>
+                  <label style={labelStyle}>Minimum ($)</label>
+                  <input type="number" min="0" step="0.01" value={offer.minCartValue ?? ""}
+                    onChange={(e) => onUpdate({ minCartValue: parseFloat(e.target.value) || 0 })}
+                    style={{ ...inputStyle, width: 140 }} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Maximum ($) <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
+                  <input type="number" min="0" step="0.01" value={offer.maxCartValue ?? ""}
+                    onChange={(e) => onUpdate({ maxCartValue: e.target.value ? parseFloat(e.target.value) : null })}
+                    placeholder="No limit" style={{ ...inputStyle, width: 140 }} />
+                </div>
+              </div>
+            )}
+
+            {offer.triggerType === "quantity" && (
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+                <div>
+                  <label style={labelStyle}>Minimum items</label>
+                  <input type="number" min="1" value={offer.minQuantity ?? ""}
+                    onChange={(e) => onUpdate({ minQuantity: parseInt(e.target.value) || 1 })}
+                    style={{ ...inputStyle, width: 120 }} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Maximum items <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
+                  <input type="number" min="1" value={offer.maxQuantity ?? ""}
+                    onChange={(e) => onUpdate({ maxQuantity: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="No limit" style={{ ...inputStyle, width: 120 }} />
+                </div>
+              </div>
+            )}
+
+            {/* AND/OR logic pill */}
+            {offer.triggerType !== "product" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14,
+                padding: "10px 14px", background: "#f9f9fb", borderRadius: 10, border: "1px solid #ebebeb" }}>
+                <select value={offer.conditionLogic} onChange={(e) => onUpdate({ conditionLogic: e.target.value })}
+                  style={{ padding: "6px 12px", border: "1.5px solid #ddd", borderRadius: 8, fontSize: 13,
+                    fontWeight: 700, background: "#fff", cursor: "pointer",
+                    color: offer.conditionLogic === "AND" ? "#008060" : "#c05717" }}>
+                  <option value="AND">AND</option>
+                  <option value="OR">OR</option>
+                </select>
+                <span style={{ fontSize: 12, color: "#666" }}>
+                  {offer.conditionLogic === "AND"
+                    ? "Also require specific products/collections in cart (leave empty to ignore)"
+                    : "OR unlock the gift when specific products/collections are in cart"}
+                </span>
+              </div>
+            )}
+
+            {/* Product + collection pickers */}
+            <div style={{ background: "#f9f9fb", border: "1px solid #ebebeb", borderRadius: 12,
+              padding: "16px", display: "flex", flexDirection: "column", gap: 16 }}>
+
+              {offer.triggerType === "product" && (
+                <p style={{ margin: 0, fontSize: 12, color: "#555" }}>
+                  Gift unlocks when the cart contains <strong>any</strong> of the selected products or collection items.
+                </p>
+              )}
+
+              {/* Products */}
+              <div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <label style={{ ...labelStyle, margin: 0 }}>
+                    Products
+                    {(offer.triggerProductIds || []).length > 0 && (
+                      <span style={{ fontWeight: 400, color: "#008060", marginLeft: 6 }}>
+                        {offer.triggerProductIds.length} selected
+                      </span>
+                    )}
+                  </label>
+                  <button type="button" onClick={onPickProducts} style={pickerBtnSm}>+ Select</button>
+                </div>
+                {(offer.triggerProductIds || []).length > 0 ? (
+                  <ProductChips
+                    items={offer.triggerProductIds}
+                    type="product"
+                    onRemove={(id) => onUpdate({ triggerProductIds: offer.triggerProductIds.filter((p) => p.id !== id) })}
+                  />
+                ) : (
+                  <p style={{ ...helpText, margin: 0 }}>No products selected.</p>
+                )}
+              </div>
+
+              {/* Collections */}
+              <div style={{ borderTop: "1px solid #e8e8e8", paddingTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <label style={{ ...labelStyle, margin: 0 }}>
+                    Collections
+                    {(offer.triggerCollectionIds || []).length > 0 && (
+                      <span style={{ fontWeight: 400, color: "#008060", marginLeft: 6 }}>
+                        {offer.triggerCollectionIds.length} selected
+                      </span>
+                    )}
+                  </label>
+                  <button type="button" onClick={onPickCollections} style={pickerBtnSm}>+ Select</button>
+                </div>
+                <p style={{ ...helpText, margin: "0 0 10px" }}>Collection products are resolved to IDs when you save.</p>
+                {(offer.triggerCollectionIds || []).length > 0 ? (
+                  <ProductChips
+                    items={offer.triggerCollectionIds}
+                    type="collection"
+                    onRemove={(id) => onUpdate({ triggerCollectionIds: offer.triggerCollectionIds.filter((c) => c.id !== id) })}
+                  />
+                ) : (
+                  <p style={{ ...helpText, margin: 0 }}>No collections selected.</p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* Free gift product */}
+          <section style={{ borderTop: "1px solid #f0f0f0", paddingTop: 20 }}>
+            <SectionHeading>Free Gift Product</SectionHeading>
+            {creating ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px",
+                background: "#f0faf5", border: "1.5px solid #b7e5d4", borderRadius: 10 }}>
+                <span style={{ fontSize: 20 }}>⏳</span>
+                <p style={{ margin: 0, fontSize: 13, color: "#005c40" }}>Creating $0.00 product on Shopify…</p>
+              </div>
+            ) : hasProduct ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px",
+                border: "1.5px solid #b7e5d4", borderRadius: 12, background: "#f0faf5" }}>
+                {offer.productImageUrl ? (
+                  <img src={offer.productImageUrl} alt={offer.productTitle}
+                    style={{ width: 60, height: 60, borderRadius: 10, objectFit: "cover", flexShrink: 0, border: "1px solid #d4f0e5" }} />
+                ) : (
+                  <div style={{ width: 60, height: 60, borderRadius: 10, background: "#d4f0e5", flexShrink: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🎁</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#111" }}>{offer.productTitle}</p>
+                  <p style={{ margin: "4px 0 0", fontSize: 12, color: "#008060", fontWeight: 600 }}>✓ $0.00 — Ready to use</p>
+                  <p style={{ margin: "2px 0 0", fontSize: 11, color: "#888" }}>Added automatically when threshold is met.</p>
+                </div>
+                <button type="button"
+                  onClick={() => onUpdate({ productVariantId: null, productTitle: null, productImageUrl: null })}
+                  style={changeBtnStyle}>Change</button>
+              </div>
+            ) : (
+              <div style={{ padding: "16px", background: "#fafafa", border: "1.5px dashed #ddd", borderRadius: 12 }}>
+                <p style={{ fontSize: 13, color: "#555", margin: "0 0 12px" }}>
+                  Pick any product — EdgeCart creates a <strong>$0.00 copy</strong> tagged{" "}
+                  <code style={{ background: "#f0f0f0", padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>edge-cart-freebie</code>{" "}
+                  that gets added to cart automatically.
+                </p>
+                <button type="button" onClick={onCreateProduct} style={pickerBtn}>🎁 Select Free Gift Product</button>
+              </div>
+            )}
+          </section>
+
+          {/* Per-offer Save button */}
+          <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 16, display: "flex", justifyContent: "flex-end" }}>
+            <button type="button" onClick={onSave} disabled={saving} style={{
+              padding: "10px 24px", background: saving ? "#ccc" : "#008060", color: "#fff",
+              border: "none", borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer",
+              opacity: saving ? 0.7 : 1, transition: "opacity 0.2s",
+            }}>
+              {saving ? "Saving…" : "💾 Save All Offers"}
+            </button>
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Section heading ───────────────────────────────────────── */
+function SectionHeading({ children }) {
+  return (
+    <p style={{ margin: "0 0 14px", fontSize: 13, fontWeight: 700, color: "#333", letterSpacing: "0.02em",
+      textTransform: "uppercase" }}>{children}</p>
+  );
+}
+
+/* ── Toggle switch ─────────────────────────────────────────── */
 function ToggleSwitch({ value, onChange }) {
   return (
     <label style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}>
-      <input
-        type="checkbox"
-        checked={value}
-        onChange={(e) => onChange(e.target.checked)}
-        style={{ display: "none" }}
-      />
-      <span
-        style={{
-          display: "inline-flex",
-          width: 44,
-          height: 24,
-          borderRadius: 12,
-          padding: 2,
-          background: value ? "#008060" : "#ccc",
-          transition: "background 0.2s",
-          alignItems: "center",
-        }}
-      >
-        <span
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: "50%",
-            background: "#fff",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
-            transition: "transform 0.2s",
-            transform: value ? "translateX(20px)" : "translateX(2px)",
-            display: "block",
-          }}
-        />
+      <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} style={{ display: "none" }} />
+      <span style={{ display: "inline-flex", width: 44, height: 24, borderRadius: 12, padding: 2,
+        background: value ? "#008060" : "#ccc", transition: "background 0.2s", alignItems: "center" }}>
+        <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.25)", transition: "transform 0.2s",
+          transform: value ? "translateX(20px)" : "translateX(2px)", display: "block" }} />
       </span>
     </label>
   );
 }
 
-function ProductChips({ products, onRemove }) {
+/* ── Product / collection chips ────────────────────────────── */
+function ProductChips({ items, onRemove, type }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-      {products.map((p) => (
-        <div
-          key={p.id}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "5px 10px",
-            background: "#f0f4ff",
-            borderRadius: 20,
-            fontSize: 13,
-            fontWeight: 500,
-          }}
-        >
-          {p.title}
-          <button
-            type="button"
-            onClick={() => onRemove(p.id)}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "#666", padding: 0, fontSize: 14 }}
-          >
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+      {items.map((item) => (
+        <div key={item.id} style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 10px 8px 8px",
+          background: "#fff", border: "1.5px solid #e0e0e0",
+          borderRadius: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+          maxWidth: 220,
+        }}>
+          {/* Thumbnail */}
+          {item.imageUrl ? (
+            <img src={item.imageUrl} alt={item.title}
+              style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", flexShrink: 0, border: "1px solid #eee" }} />
+          ) : (
+            <div style={{ width: 40, height: 40, borderRadius: 8, background: "#f0f0f0", flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
+              {type === "collection" ? "📁" : "📦"}
+            </div>
+          )}
+          {/* Info */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#111",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</p>
+            <p style={{ margin: "2px 0 0", fontSize: 11, color: type === "collection" ? "#6366f1" : "#008060",
+              fontWeight: 500 }}>{type === "collection" ? "Collection" : "Product"}</p>
+          </div>
+          {/* Remove */}
+          <button type="button" onClick={() => onRemove(item.id)}
+            style={{ background: "#fee2e2", border: "none", cursor: "pointer", color: "#dc2626",
+              padding: "3px 7px", borderRadius: 6, fontSize: 13, fontWeight: 700, flexShrink: 0, lineHeight: 1 }}>
             ✕
           </button>
         </div>
@@ -701,66 +654,20 @@ function ProductChips({ products, onRemove }) {
   );
 }
 
-const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#333", marginBottom: 6 };
-const helpText = { margin: "6px 0 0", fontSize: 12, color: "#888" };
-const inputStyle = {
-  width: "100%",
-  padding: "9px 12px",
-  border: "1.5px solid #e0e0e0",
-  borderRadius: 8,
-  fontSize: 14,
-  color: "#111",
-  outline: "none",
-  boxSizing: "border-box",
-  background: "#fafafa",
-};
-const selectStyle = {
-  width: "100%",
-  padding: "9px 12px",
-  border: "1.5px solid #e0e0e0",
-  borderRadius: 8,
-  fontSize: 14,
-  color: "#111",
-  background: "#fafafa",
-  outline: "none",
-  cursor: "pointer",
-};
-const pickerBtn = {
-  padding: "9px 16px",
-  border: "1.5px dashed #008060",
-  borderRadius: 8,
-  background: "#f0faf5",
-  color: "#008060",
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: "pointer",
-};
-const productCard = {
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  padding: "12px 14px",
-  border: "1.5px solid #e8e8e8",
-  borderRadius: 10,
-  background: "#fafafa",
-};
-const removeBtn = {
-  background: "none",
-  border: "1px solid #ddd",
-  cursor: "pointer",
-  color: "#555",
-  fontSize: 13,
-  padding: "6px 10px",
-  borderRadius: 6,
-  fontWeight: 500,
-};
+/* ── Styles ────────────────────────────────────────────────── */
+const labelStyle  = { display: "block", fontSize: 13, fontWeight: 600, color: "#333", marginBottom: 6 };
+const helpText    = { margin: "4px 0 0", fontSize: 12, color: "#888" };
+const inputStyle  = { width: "100%", padding: "9px 12px", border: "1.5px solid #e0e0e0", borderRadius: 8, fontSize: 14, color: "#111", outline: "none", boxSizing: "border-box", background: "#fafafa" };
+const selectStyle = { width: "100%", padding: "9px 12px", border: "1.5px solid #e0e0e0", borderRadius: 8, fontSize: 14, color: "#111", background: "#fafafa", outline: "none", cursor: "pointer" };
+const pickerBtn   = { padding: "9px 16px", border: "1.5px dashed #008060", borderRadius: 8, background: "#f0faf5", color: "#008060", fontSize: 14, fontWeight: 600, cursor: "pointer" };
+const pickerBtnSm = { padding: "6px 12px", border: "1.5px dashed #008060", borderRadius: 7, background: "#f0faf5", color: "#008060", fontSize: 12, fontWeight: 600, cursor: "pointer" };
+const editBtn     = { padding: "6px 14px", border: "1px solid #ddd", borderRadius: 6, background: "#fff", fontSize: 13, cursor: "pointer", fontWeight: 500 };
+const deleteBtn   = { padding: "6px 14px", border: "1px solid #fca5a5", borderRadius: 6, background: "#fff5f5", color: "#dc2626", fontSize: 13, cursor: "pointer", fontWeight: 500 };
+const changeBtnStyle = { background: "none", border: "1px solid #ddd", cursor: "pointer", color: "#555", fontSize: 13, padding: "6px 10px", borderRadius: 6, fontWeight: 500 };
+const addOfferBtn = { width: "100%", padding: "11px", border: "1.5px dashed #ccc", borderRadius: 10, background: "#fafafa", color: "#555", fontSize: 14, fontWeight: 600, cursor: "pointer" };
 
 function safeJSON(str, fallback) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return fallback;
-  }
+  try { return JSON.parse(str); } catch { return fallback; }
 }
 
 export const headers = (headersArgs) => boundary.headers(headersArgs);

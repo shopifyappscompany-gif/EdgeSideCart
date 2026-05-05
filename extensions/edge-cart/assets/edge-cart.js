@@ -25,8 +25,10 @@
   var isOpen            = false;
   var initialized       = false;
   var updatingKeys      = {};
-  var freebieAutoSync   = false;
-  var freebieRetryAt    = 0;    /* timestamp: don't retry before this */
+  var freebieAutoSync      = {};   /* keyed by offer.id */
+  var freebieRetryAt       = {};   /* keyed by offer.id */
+  var maxExceededNotified  = {};   /* keyed by offer.id — prevents toast spam */
+  var tierUnlockedState    = {};   /* keyed by tier.id — fires confetti on unlock transition */
   var ecHandlingAdd     = false;
   var scarcityTimer     = null;
 
@@ -38,12 +40,23 @@
       .then(function (results) {
         settings = results[0];
         cart     = results[1];
+        if (settings && settings.blockCartPage && window.location.pathname === "/cart") {
+          sessionStorage.setItem("ec-reopen-cart", "1");
+          var ref = document.referrer;
+          var sameOrigin = ref && ref.startsWith(window.location.origin) && ref.indexOf("/cart") === -1;
+          window.location.replace(sameOrigin ? ref : "/");
+          return;
+        }
         if (!settings || !settings.enabled) return;
         injectDynamicCSS();
         injectCustomCode();
         buildDOM();
         attachGlobalListeners();
         initialized = true;
+        if (sessionStorage.getItem("ec-reopen-cart")) {
+          sessionStorage.removeItem("ec-reopen-cart");
+          setTimeout(openCart, 300);
+        }
         if (settings.autoDiscountEnabled && settings.autoDiscountCode) {
           applyDiscount(settings.autoDiscountCode);
         }
@@ -231,15 +244,15 @@
     drawer.innerHTML = [
       '<div class="ec-inner">',
         '<div class="ec-freebie-toast" id="ec-freebie-toast" aria-live="polite"></div>',
-        '<div class="ec-banner" id="ec-banner"></div>',
-        '<div class="ec-scarcity" id="ec-scarcity" style="display:none"></div>',
-        '<div class="ec-rewards" id="ec-rewards" style="display:none"></div>',
         '<div class="ec-header">',
           '<h2 class="ec-header__title" id="ec-header-title"></h2>',
           '<button class="ec-header__close" id="ec-close" aria-label="Close cart">',
             svgClose(),
           '</button>',
         '</div>',
+        '<div class="ec-banner" id="ec-banner"></div>',
+        '<div class="ec-scarcity" id="ec-scarcity" style="display:none"></div>',
+        '<div class="ec-rewards" id="ec-rewards" style="display:none"></div>',
         '<div class="ec-body" id="ec-body"></div>',
         '<div class="ec-footer" id="ec-footer"></div>',
       '</div>',
@@ -263,6 +276,7 @@
     renderBody();
     renderFooter();
     syncCartBadges();
+    syncMaxExceeded();
   }
 
   function renderBanner() {
@@ -369,22 +383,36 @@
       var threshFmt = useQty
         ? tier.threshold + (tier.threshold === 1 ? " item" : " items")
         : money(tier.threshold * 100);
-      var milLabel  = tier.unlockedLabel || tier.label || threshFmt;
-      var isGift    = /free|gift|product/i.test(milLabel);
+      var isGift    = /free|gift|product/i.test(tier.unlockedLabel || tier.label || "");
+
+      /* Fire confetti + 5-second toast when a tier transitions locked → unlocked */
+      var wasUnlocked = tierUnlockedState[tier.id];
+      if (unlocked && !wasUnlocked) {
+        if (tier.confettiEnabled !== false) launchConfetti();
+        showToast(tier.unlockedLabel || "🎉 Reward unlocked!", 5000, false);
+      }
+      tierUnlockedState[tier.id] = unlocked;
+
+      var lbl = tier.unlockedLabel || tier.label || threshFmt;
       return [
         '<div class="ec-rw__node' + (unlocked ? ' ec-rw__node--done' : '') + '" style="left:' + pct + '%">',
           '<span class="ec-rw__price">' + esc(threshFmt) + '</span>',
           '<div class="ec-rw__dot">' + (isGift ? svgRwGift(unlocked) : svgRwTag(unlocked)) + '</div>',
-          '<span class="ec-rw__lbl">' + esc(milLabel) + '</span>',
+          '<span class="ec-rw__lbl">' + esc(lbl) + '</span>',
         '</div>',
       ].join("");
     }).join("");
+
+    var clampedPct = Math.min(100, Math.max(0, fillPct));
+    var fillStyle = 'display:block;height:100%;width:' + clampedPct + '%;background:linear-gradient(90deg,#f472b6 0%,#dc2626 100%);border-radius:4px;';
 
     el.innerHTML = [
       '<div class="ec-rw__inner">',
         '<p class="ec-rw__msg">' + esc(msg) + '</p>',
         '<div class="ec-rw__stage">',
-          '<div class="ec-rw__bar"><div class="ec-rw__fill" style="width:' + fillPct + '%"></div></div>',
+          '<div class="ec-rw__bar">',
+            '<div style="' + fillStyle + '"></div>',
+          '</div>',
           nodesHTML,
         '</div>',
       '</div>',
@@ -416,18 +444,31 @@
     body.innerHTML = '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>';
   }
 
+  function getFreebieOffer(item) {
+    if (!settings) return null;
+    var offers = settings.freebieOffers || [];
+    for (var i = 0; i < offers.length; i++) {
+      var offer = offers[i];
+      if (!offer.productVariantId) continue;
+      var numId = extractId(offer.productVariantId);
+      if (String(item.variant_id) === numId ||
+          (item.properties && item.properties._edge_cart_freebie === "true")) {
+        return offer;
+      }
+    }
+    return null;
+  }
+
   function isFreebieItem(item) {
-    if (!settings || !settings.freebieProductVariantId) return false;
-    var numId = extractId(settings.freebieProductVariantId);
-    return String(item.variant_id) === numId ||
-      (item.properties && item.properties._edge_cart_freebie === "true");
+    return !!getFreebieOffer(item);
   }
 
   function renderItem(item) {
-    var freebie = isFreebieItem(item);
+    var freebieOffer = getFreebieOffer(item);
+    var freebie = !!freebieOffer;
     var img = (item.featured_image && item.featured_image.url)
       ? item.featured_image.url
-      : (item.image || (freebie ? (settings.freebieProductImageUrl || "") : ""));
+      : (item.image || (freebie ? (freebieOffer.productImageUrl || "") : ""));
     var hasDisc = item.line_price < item.original_line_price;
     var isUpd   = updatingKeys[item.key];
     var showVar = settings.showVariantTitle !== false;
@@ -490,7 +531,7 @@
     var html = "";
 
     /* Freebie */
-    if (settings.freebieEnabled) html += buildFreebieHTML();
+    html += buildFreebieHTML();
 
     /* Static upsell */
     if (settings.upsellEnabled) html += buildUpsellHTML();
@@ -626,20 +667,25 @@
   }
 
   /* ── Freebie toast popup ───────────────────────────────── */
-  function showFreebieToast() {
+  function showToast(text, duration, withConfetti) {
     var toast = id("ec-freebie-toast");
     if (!toast) return;
-    toast.textContent = settings.freebieTitle || "🎁 Free gift added to your cart!";
+    toast.textContent = text || "";
     toast.classList.add("ec-freebie-toast--visible");
     if (freebieToastTimer) clearTimeout(freebieToastTimer);
     freebieToastTimer = setTimeout(function () {
       toast.classList.remove("ec-freebie-toast--visible");
       freebieToastTimer = null;
-    }, 3500);
+    }, duration || 3500);
+    if (withConfetti) launchConfetti();
+  }
 
-    if (settings.freebieConfettiEnabled !== false) {
-      launchConfetti();
-    }
+  function showFreebieToast(offer) {
+    showToast(
+      (offer && offer.title) || "🎁 Free gift added to your cart!",
+      3500,
+      offer ? offer.confettiEnabled !== false : settings.freebieConfettiEnabled !== false
+    );
   }
 
   /* ── Confetti ──────────────────────────────────────────── */
@@ -697,93 +743,138 @@
     requestAnimationFrame(frame);
   }
 
-  /* ── Freebie HTML ──────────────────────────────────────── */
+  /* ── Freebie HTML — multi-offer ───────────────────────── */
   function buildFreebieHTML() {
-    if (!settings.freebieProductVariantId) return "";
+    var offers = settings.freebieOffers || [];
+    if (!offers.length) return "";
 
-    var numId    = extractId(settings.freebieProductVariantId);
-    var inCart   = cart.items.some(function (i) { return String(i.variant_id) === numId; });
-    var unlocked = checkFreebie();
+    var html = "";
+    offers.forEach(function (offer) {
+      if (!offer.enabled || !offer.productVariantId) return;
+      var numId    = extractId(offer.productVariantId);
+      var inCart   = cart.items.some(function (i) { return String(i.variant_id) === numId; });
+      var unlocked = checkOffer(offer);
 
-    /* In cart already — it shows as a styled green line item */
-    if (inCart) {
-      /* Threshold no longer met — trigger removal on every render pass */
-      if (!unlocked && !freebieAutoSync) syncFreebie();
-      return "";
-    }
-
-    /* Threshold met — auto-add silently in background; toast appears when done */
-    if (unlocked) {
-      if (!freebieAutoSync && Date.now() >= freebieRetryAt) {
-        syncFreebie();
+      /* In cart — shows as a line item; trigger removal if no longer unlocked */
+      if (inCart) {
+        if (!unlocked && !freebieAutoSync[offer.id]) syncOfferFreebie(offer);
+        return;
       }
-      return "";
-    }
 
-    /* Locked — show progress bar only */
-    var prog = freebieProgress();
-    if (!prog || !prog.msg) return "";
-    return [
-      '<div class="ec-freebie ec-freebie--locked">',
-        '<p class="ec-freebie__msg">' + esc(prog.msg) + '</p>',
-        '<div class="ec-freebie__bar-track">',
-          '<div class="ec-freebie__bar-fill" style="width:' + prog.pct + '%"></div>',
+      /* Unlocked — auto-add silently */
+      if (unlocked) {
+        if (!freebieAutoSync[offer.id] && Date.now() >= (freebieRetryAt[offer.id] || 0)) {
+          syncOfferFreebie(offer);
+        }
+        return;
+      }
+
+      /* Locked — show progress bar */
+      var prog = offerProgress(offer);
+      if (!prog || !prog.msg) return;
+      html += [
+        '<div class="ec-freebie ec-freebie--locked">',
+          '<p class="ec-freebie__msg">' + esc(prog.msg) + '</p>',
+          '<div class="ec-freebie__bar-track">',
+            '<div class="ec-freebie__bar-fill" style="width:' + prog.pct + '%"></div>',
+          '</div>',
         '</div>',
-      '</div>',
-    ].join("");
+      ].join("");
+    });
+
+    return html;
   }
 
-  /* ── Freebie auto-sync ─────────────────────────────────── */
+  /* ── Freebie auto-sync — multi-offer ─────────────────── */
   function syncFreebie() {
-    if (freebieAutoSync) return;
-    if (!settings || !settings.freebieEnabled || !settings.freebieProductVariantId) return;
+    if (!settings || !cart) return;
+    var offers = settings.freebieOffers || [];
+    offers.forEach(function (offer) {
+      if (offer.enabled && offer.productVariantId) syncOfferFreebie(offer);
+    });
+  }
+
+  function syncOfferFreebie(offer) {
+    if (freebieAutoSync[offer.id]) return;
     if (!cart) return;
 
-    var numId       = extractId(settings.freebieProductVariantId);
+    var numId       = extractId(offer.productVariantId);
     var freebieItem = cart.items.find(function (i) { return String(i.variant_id) === numId; });
     var realItems   = cart.items.filter(function (i) { return String(i.variant_id) !== numId; });
 
-    /* Empty cart with no freebie — nothing to do */
     if (!freebieItem && realItems.length === 0) return;
 
-    var unlocked = checkFreebie();
+    var unlocked = checkOffer(offer);
 
     if (unlocked && !freebieItem) {
-      /* Respect cooldown period after a failed add */
-      if (Date.now() < freebieRetryAt) return;
+      if (Date.now() < (freebieRetryAt[offer.id] || 0)) return;
 
-      freebieAutoSync = true;
+      freebieAutoSync[offer.id] = true;
       cartAdd(numId, 1, { _edge_cart_freebie: "true" })
         .then(function () {
-          freebieAutoSync = false;
-          freebieRetryAt  = 0;
-          showFreebieToast();
-          syncFreebie();
+          freebieAutoSync[offer.id] = false;
+          freebieRetryAt[offer.id]  = 0;
+          showFreebieToast(offer);
+          syncOfferFreebie(offer);
           if (isOpen) render();
           syncCartBadges();
         })
         .catch(function (err) {
-          freebieAutoSync = false;
-          freebieRetryAt  = 0; /* retry immediately on next sync */
+          freebieAutoSync[offer.id] = false;
+          freebieRetryAt[offer.id]  = 0;
           console.warn("[EdgeCart] Freebie auto-add failed:", err.message || err);
-          /* Don't re-render — no UI change needed */
         });
 
     } else if (!unlocked && freebieItem) {
-      freebieAutoSync = true;
+      freebieAutoSync[offer.id] = true;
       cartChange(freebieItem.key, 0)
         .then(function () {
-          freebieAutoSync = false;
-          freebieRetryAt  = 0;
-          syncFreebie();
+          freebieAutoSync[offer.id] = false;
+          freebieRetryAt[offer.id]  = 0;
+          syncOfferFreebie(offer);
           if (isOpen) render();
           syncCartBadges();
         })
         .catch(function (err) {
-          freebieAutoSync = false;
+          freebieAutoSync[offer.id] = false;
           console.warn("[EdgeCart] Freebie auto-remove failed:", err.message || err);
         });
     }
+  }
+
+  /* ── Max-exceeded toast — once per state change ──────────── */
+  function syncMaxExceeded() {
+    if (!settings || !cart) return;
+    var offers = settings.freebieOffers || [];
+    offers.forEach(function (offer) {
+      if (!offer.enabled) return;
+      var exceeded = isOfferMaxExceeded(offer);
+      if (exceeded && !maxExceededNotified[offer.id]) {
+        maxExceededNotified[offer.id] = true;
+        var limitStr = offer.triggerType === "quantity"
+          ? (offer.maxQuantity + " item" + (offer.maxQuantity !== 1 ? "s" : ""))
+          : moneyVal(offer.maxCartValue * 100);
+        showToast("ℹ️ Free gift applies to orders up to " + limitStr + " only", 10000, false);
+      } else if (!exceeded) {
+        maxExceededNotified[offer.id] = false;
+      }
+    });
+  }
+
+  function isOfferMaxExceeded(offer) {
+    if (!cart) return false;
+    var fid = offer.productVariantId ? extractId(offer.productVariantId) : null;
+    if (offer.triggerType === "cartValue") {
+      return !!(offer.maxCartValue && (cart.total_price / 100) > offer.maxCartValue);
+    }
+    if (offer.triggerType === "quantity") {
+      if (!offer.maxQuantity) return false;
+      var qty = cart.items.reduce(function (s, i) {
+        return String(i.variant_id) === fid ? s : s + i.quantity;
+      }, 0);
+      return qty > offer.maxQuantity;
+    }
+    return false;
   }
 
   /* ── Upsell HTML — horizontal scroll carousel ──────────── */
@@ -798,8 +889,12 @@
     var cards = toShow.map(function (p) {
       var v   = p.variants && p.variants[0];
       if (!v) return "";
-      var vid   = extractId(v.id);
-      var price = v.price ? moneyVal(parseFloat(v.price) * 100) : "";
+      var vid      = extractId(v.id);
+      var price    = v.price ? moneyDollars(v.price) : "";
+      var compare  = v.compareAtPrice && parseFloat(v.compareAtPrice) > parseFloat(v.price) ? moneyDollars(v.compareAtPrice) : "";
+      var priceHTML = compare
+        ? '<p class="ec-upsell-card__price"><s>' + compare + '</s> ' + price + '</p>'
+        : (price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "");
       var img   = p.featuredImage && p.featuredImage.url ? p.featuredImage.url : "";
       return [
         '<div class="ec-upsell-card">',
@@ -808,9 +903,9 @@
             : '<div class="ec-upsell-card__img-placeholder"></div>',
           '<div class="ec-upsell-card__body">',
             '<p class="ec-upsell-card__name">' + esc(p.title) + '</p>',
-            price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "",
+            priceHTML,
+            '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(vid) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
           '</div>',
-          '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(vid) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
         '</div>',
       ].join("");
     }).join("");
@@ -831,10 +926,9 @@
     if (aiRecommendationsFetching) return;
 
     /* Seed: non-freebie item with highest line price */
-    var freebieId = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
     var seed = null;
     cart.items.forEach(function (item) {
-      if (freebieId && String(item.variant_id) === freebieId) return;
+      if (getFreebieOffer(item)) return;
       if (!seed || item.line_price > seed.line_price) seed = item;
     });
     if (!seed) { aiRecommendations = []; return; }
@@ -875,10 +969,15 @@
     var cards = toShow.map(function (p) {
       var v = p.variants && p.variants[0];
       if (!v) return "";
-      /* Recommendations API returns featured_image as a string URL */
-      var img   = (typeof p.featured_image === "string" ? p.featured_image : "")
-               || (p.images && p.images[0] && p.images[0].src) || "";
-      var price = v.price ? moneyVal(parseFloat(v.price) * 100) : "";
+      /* Recommendations API returns featured_image as a string URL.
+         Prices are integers in cents (same as /cart.js) — use moneyVal directly. */
+      var img      = (typeof p.featured_image === "string" ? p.featured_image : "")
+                  || (p.images && p.images[0] && p.images[0].src) || "";
+      var price    = v.price ? moneyVal(v.price) : "";
+      var compare  = v.compare_at_price && v.compare_at_price > v.price ? moneyVal(v.compare_at_price) : "";
+      var priceHTML = compare
+        ? '<p class="ec-upsell-card__price"><s>' + compare + '</s> ' + price + '</p>'
+        : (price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "");
       return [
         '<div class="ec-upsell-card">',
           img
@@ -886,9 +985,9 @@
             : '<div class="ec-upsell-card__img-placeholder"></div>',
           '<div class="ec-upsell-card__body">',
             '<p class="ec-upsell-card__name">' + esc(p.title) + '</p>',
-            price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "",
+            priceHTML,
+            '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(String(v.id)) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
           '</div>',
-          '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(String(v.id)) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
         '</div>',
       ].join("");
     }).join("");
@@ -907,12 +1006,12 @@
   /* ===========================================================
      THRESHOLD CHECKS
   =========================================================== */
-  function checkFreebie() {
-    if (!cart) return false;
-    var t   = settings.freebieTriggerType;
-    var fid = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
+  function checkOffer(offer) {
+    if (!cart || !offer || !offer.enabled) return false;
+    var fid = offer.productVariantId ? extractId(offer.productVariantId) : null;
+    var t   = offer.triggerType;
 
-    var productIds = (settings.freebieTriggerProductIds || []).map(function (p) {
+    var productIds = (offer.triggerProductIds || []).map(function (p) {
       return extractId(typeof p === "object" ? p.id : p);
     });
     var hasProductCond = productIds.length > 0;
@@ -923,43 +1022,38 @@
       });
     }
 
-    /* "product" trigger = only product/collection condition */
     if (t === "product") return productMet();
 
-    /* Primary condition */
     var primaryMet = false;
     if (t === "cartValue") {
       var total = cart.total_price / 100;
-      primaryMet = total >= settings.freebieMinCartValue &&
-                   (!settings.freebieMaxCartValue || total <= settings.freebieMaxCartValue);
+      primaryMet = total >= offer.minCartValue &&
+                   (!offer.maxCartValue || total <= offer.maxCartValue);
     } else if (t === "quantity") {
       var qty = cart.items.reduce(function (sum, i) {
         return String(i.variant_id) === fid ? sum : sum + i.quantity;
       }, 0);
-      primaryMet = qty >= settings.freebieMinQuantity &&
-                   (!settings.freebieMaxQuantity || qty <= settings.freebieMaxQuantity);
+      primaryMet = qty >= offer.minQuantity &&
+                   (!offer.maxQuantity || qty <= offer.maxQuantity);
     }
 
-    /* No product condition configured — primary alone decides */
     if (!hasProductCond) return primaryMet;
 
-    /* Combine with AND / OR */
-    var logic = settings.freebieConditionLogic || "AND";
+    var logic = offer.conditionLogic || "AND";
     return logic === "OR" ? primaryMet || productMet() : primaryMet && productMet();
   }
 
-  function freebieProgress() {
-    if (!cart) return null;
-    var t   = settings.freebieTriggerType;
-    var fid = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
+  function offerProgress(offer) {
+    if (!cart || !offer) return null;
+    var fid = offer.productVariantId ? extractId(offer.productVariantId) : null;
+    var t   = offer.triggerType;
 
     if (t === "cartValue") {
       var cur    = cart.total_price / 100;
-      var target = settings.freebieMinCartValue;
-      var max    = settings.freebieMaxCartValue;
-      if (max && cur > max) {
-        return { pct: 100, msg: "Free gift available for orders up to " + moneyVal(max * 100) + " only." };
-      }
+      var target = offer.minCartValue;
+      var max    = offer.maxCartValue;
+      /* Max exceeded — handled by syncMaxExceeded() toast, not inline text */
+      if (max && cur > max) return null;
       var rem = Math.max(0, target - cur);
       return {
         pct: Math.min(100, Math.round((cur / target) * 100)),
@@ -970,11 +1064,10 @@
       var curQ    = cart.items.reduce(function (sum, i) {
         return String(i.variant_id) === fid ? sum : sum + i.quantity;
       }, 0);
-      var targetQ = settings.freebieMinQuantity;
-      var maxQ    = settings.freebieMaxQuantity;
-      if (maxQ && curQ > maxQ) {
-        return { pct: 100, msg: "Free gift available for orders up to " + maxQ + " items only." };
-      }
+      var targetQ = offer.minQuantity;
+      var maxQ    = offer.maxQuantity;
+      /* Max exceeded — handled by syncMaxExceeded() toast, not inline text */
+      if (maxQ && curQ > maxQ) return null;
       var remQ = Math.max(0, targetQ - curQ);
       return {
         pct: Math.min(100, Math.round((curQ / targetQ) * 100)),
@@ -1243,6 +1336,21 @@
   }
 
   function money(cents) { return moneyVal(cents); }
+
+  /* Formats a dollar-string from Shopify's REST API (e.g. "749.95") directly.
+     Avoids the * 100 / 100 round-trip that can introduce floating-point drift. */
+  function moneyDollars(str) {
+    var val = parseFloat(str) || 0;
+    var currency = (window.Shopify && window.Shopify.currency && window.Shopify.currency.active)
+      || (cart && cart.currency) || "USD";
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency", currency: currency, minimumFractionDigits: 2,
+      }).format(val);
+    } catch (_) {
+      return "$" + val.toFixed(2);
+    }
+  }
 
   function moneyVal(cents) {
     var currency = (window.Shopify && window.Shopify.currency && window.Shopify.currency.active)

@@ -37,6 +37,7 @@ export const action = async ({ request }) => {
     tieredRewards:           String(form.get("tieredRewards") || "[]"),
     scrollableItems:         form.get("scrollableItems") === "true",
     showLineItemProperties:  form.get("showLineItemProperties") === "true",
+    blockCartPage:           form.get("blockCartPage") === "true",
     customCss:               String(form.get("customCss") || ""),
     customJs:                String(form.get("customJs")  || ""),
   };
@@ -78,6 +79,7 @@ export default function GeneralSettings() {
   const [tieredRewardsEnabled,    setTieredRewardsEnabled]    = useState(s.tieredRewardsEnabled ?? false);
   const [scrollableItems,         setScrollableItems]         = useState(s.scrollableItems ?? true);
   const [showLineItemProperties,  setShowLineItemProperties]  = useState(s.showLineItemProperties ?? false);
+  const [blockCartPage,           setBlockCartPage]           = useState(s.blockCartPage ?? false);
   const [customCss,               setCustomCss]               = useState(s.customCss ?? "");
   const [customJs,                setCustomJs]                = useState(s.customJs  ?? "");
   const [tieredRewards,           setTieredRewards]           = useState(() => {
@@ -113,6 +115,7 @@ export default function GeneralSettings() {
         tieredRewards:          JSON.stringify(tieredRewards),
         scrollableItems:        String(scrollableItems),
         showLineItemProperties: String(showLineItemProperties),
+        blockCartPage:          String(blockCartPage),
         customCss,
         customJs,
       },
@@ -128,6 +131,7 @@ export default function GeneralSettings() {
       threshold: 50,
       label: "Spend {{amount}} more to unlock a reward",
       unlockedLabel: "🎉 Reward unlocked!",
+      confettiEnabled: true,
     }]);
   }
 
@@ -191,6 +195,12 @@ export default function GeneralSettings() {
             desc="Keep items in a fixed-height scrollable area so the checkout button is always visible, even with many products."
             checked={scrollableItems}
             onChange={setScrollableItems}
+          />
+          <ToggleRow
+            label="Block /cart Page"
+            desc="Redirect customers away from the /cart page and open your side cart instead. Customers who land on /cart are sent back to the previous page with the side cart open."
+            checked={blockCartPage}
+            onChange={setBlockCartPage}
           />
         </s-stack>
       </s-section>
@@ -316,11 +326,26 @@ export default function GeneralSettings() {
                       onChange={e => updateTier(tier.id, "label", e.target.value)}
                       style={inputStyle} placeholder="Spend {{amount}} more to unlock free shipping" />
                   </div>
-                  <div>
+                  <div style={{ marginBottom: 10 }}>
                     <label style={labelStyle}>Unlocked Message</label>
                     <input type="text" value={tier.unlockedLabel}
                       onChange={e => updateTier(tier.id, "unlockedLabel", e.target.value)}
                       style={inputStyle} placeholder="🚚 Free shipping unlocked!" />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "10px 12px", background: "#f0faf5", borderRadius: 8, border: "1px solid #d4f0e5" }}>
+                    <div>
+                      <strong style={{ fontSize: 13 }}>Confetti on Unlock</strong>
+                      <p style={{ margin: "2px 0 0", fontSize: 12, color: "#555" }}>Show confetti burst when this tier is reached.</p>
+                    </div>
+                    <label style={toggleWrap}>
+                      <input type="checkbox" checked={tier.confettiEnabled !== false}
+                        onChange={e => updateTier(tier.id, "confettiEnabled", e.target.checked)}
+                        style={{ display: "none" }} />
+                      <span style={{ ...toggleTrack, background: tier.confettiEnabled !== false ? "#008060" : "#ccc" }}>
+                        <span style={{ ...toggleThumb, transform: tier.confettiEnabled !== false ? "translateX(20px)" : "translateX(2px)" }} />
+                      </span>
+                    </label>
                   </div>
                 </div>
               ))}
@@ -524,8 +549,8 @@ function CartPreview({ settings }) {
                   <p style={{ margin: "0 0 5px", fontSize: 11, fontWeight: 600, color: unlocked ? "#166534" : "#92400e" }}>
                     {unlocked ? tier.unlockedLabel : (tier.label || "").replace("{{amount}}", fmt(Math.max(0, tier.threshold * 100 - cartTotal)))}
                   </p>
-                  <div style={{ height: 5, background: "#fde68a", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: pct + "%", background: unlocked ? "#22c55e" : "linear-gradient(90deg,#f59e0b,#d97706)", borderRadius: 3, transition: "width 0.4s" }} />
+                  <div style={{ height: 6, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#f472b6,#dc2626)", borderRadius: 4, transition: "width 0.5s" }} />
                   </div>
                 </div>
               );

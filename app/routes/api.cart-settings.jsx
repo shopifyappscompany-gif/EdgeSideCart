@@ -51,6 +51,8 @@ const DEFAULT_SETTINGS = {
   freebieMaxCartValue: null,
   freebieMaxQuantity: null,
   freebieConditionLogic: "AND",
+  freebieOffers: [],
+  blockCartPage: false,
   upsellTriggerCollectionIds: [],
   scrollableItems: true,
   showLineItemProperties: false,
@@ -102,6 +104,7 @@ export const loader = async ({ request }) => {
       freebieTriggerCollectionIds: safeParseJSON(settings.freebieTriggerCollectionIds, []),
       upsellTriggerCollectionIds: safeParseJSON(settings.upsellTriggerCollectionIds, []),
       tieredRewards: safeParseJSON(settings.tieredRewards, []),
+      freebieOffers: buildFreebieOffers(settings),
     };
 
     return new Response(JSON.stringify(payload), {
@@ -118,9 +121,29 @@ export const loader = async ({ request }) => {
 };
 
 function safeParseJSON(str, fallback) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return fallback;
-  }
+  try { return JSON.parse(str); } catch { return fallback; }
+}
+
+function buildFreebieOffers(s) {
+  const offers = safeParseJSON(s.freebieOffers, []);
+  if (offers.length > 0) return offers;
+  // Backwards compat: migrate old single-offer fields into the array format
+  if (!s.freebieProductVariantId) return [];
+  return [{
+    id: "legacy",
+    enabled: s.freebieEnabled ?? true,
+    title: s.freebieTitle ?? "🎁 You've earned a free gift!",
+    triggerType: s.freebieTriggerType ?? "cartValue",
+    minCartValue: s.freebieMinCartValue ?? 100,
+    maxCartValue: s.freebieMaxCartValue ?? null,
+    minQuantity: s.freebieMinQuantity ?? 3,
+    maxQuantity: s.freebieMaxQuantity ?? null,
+    conditionLogic: s.freebieConditionLogic ?? "AND",
+    triggerProductIds: safeParseJSON(s.freebieTriggerProductIds, []),
+    triggerCollectionIds: safeParseJSON(s.freebieTriggerCollectionIds, []),
+    productVariantId: s.freebieProductVariantId,
+    productTitle: s.freebieProductTitle,
+    productImageUrl: s.freebieProductImageUrl,
+    confettiEnabled: s.freebieConfettiEnabled ?? true,
+  }];
 }
