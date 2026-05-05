@@ -56,6 +56,11 @@ const DEFAULT_SETTINGS = {
   upsellTriggerCollectionIds: [],
   scrollableItems: true,
   showLineItemProperties: false,
+  customCartIconSelector: "",
+  clickableLineItems: true,
+  addToCartBehavior: "drawer",
+  addToCartToastSeconds: 3,
+  orderSummaryEnabled: true,
 };
 
 export const loader = async ({ request }) => {

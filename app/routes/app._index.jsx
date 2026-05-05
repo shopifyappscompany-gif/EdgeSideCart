@@ -329,10 +329,17 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <a
-              href="https://calendly.com/shopifyappscompany/30min"
-              target="_blank"
-              rel="noopener noreferrer"
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                try { window.top.open("https://calendly.com/shopifyappscompany/30min", "_blank"); }
+                catch (_) { window.open("https://calendly.com/shopifyappscompany/30min", "_blank"); }
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (() => {
+                try { window.top.open("https://calendly.com/shopifyappscompany/30min", "_blank"); }
+                catch (_) { window.open("https://calendly.com/shopifyappscompany/30min", "_blank"); }
+              })()}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -340,7 +347,7 @@ export default function Dashboard() {
                 padding: "12px 14px",
                 border: "1px solid #e5e7eb",
                 borderRadius: 10,
-                textDecoration: "none",
+                cursor: "pointer",
                 background: "#f9fafb",
               }}
             >
@@ -349,7 +356,7 @@ export default function Dashboard() {
                 <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#111827" }}>Schedule a Demo</p>
                 <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>Free 30-min walkthrough</p>
               </div>
-            </a>
+            </div>
           </div>
         </div>
       </s-section>

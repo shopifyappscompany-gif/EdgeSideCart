@@ -40,6 +40,11 @@ export const action = async ({ request }) => {
     blockCartPage:           form.get("blockCartPage") === "true",
     customCss:               String(form.get("customCss") || ""),
     customJs:                String(form.get("customJs")  || ""),
+    customCartIconSelector:  String(form.get("customCartIconSelector") || ""),
+    clickableLineItems:      form.get("clickableLineItems") === "true",
+    addToCartBehavior:       String(form.get("addToCartBehavior") || "drawer"),
+    addToCartToastSeconds:   parseInt(form.get("addToCartToastSeconds") || "3", 10),
+    orderSummaryEnabled:     form.get("orderSummaryEnabled") === "true",
   };
 
   await prisma.cartSettings.upsert({
@@ -82,6 +87,11 @@ export default function GeneralSettings() {
   const [blockCartPage,           setBlockCartPage]           = useState(s.blockCartPage ?? false);
   const [customCss,               setCustomCss]               = useState(s.customCss ?? "");
   const [customJs,                setCustomJs]                = useState(s.customJs  ?? "");
+  const [customCartIconSelector,  setCustomCartIconSelector]  = useState(s.customCartIconSelector ?? "");
+  const [clickableLineItems,      setClickableLineItems]      = useState(s.clickableLineItems ?? true);
+  const [addToCartBehavior,       setAddToCartBehavior]       = useState(s.addToCartBehavior ?? "drawer");
+  const [addToCartToastSeconds,   setAddToCartToastSeconds]   = useState(s.addToCartToastSeconds ?? 3);
+  const [orderSummaryEnabled,     setOrderSummaryEnabled]     = useState(s.orderSummaryEnabled ?? true);
   const [tieredRewards,           setTieredRewards]           = useState(() => {
     try { return JSON.parse(s.tieredRewards || "[]"); } catch { return []; }
   });
@@ -118,6 +128,11 @@ export default function GeneralSettings() {
         blockCartPage:          String(blockCartPage),
         customCss,
         customJs,
+        customCartIconSelector,
+        clickableLineItems:      String(clickableLineItems),
+        addToCartBehavior,
+        addToCartToastSeconds:   String(addToCartToastSeconds),
+        orderSummaryEnabled:     String(orderSummaryEnabled),
       },
       { method: "POST" }
     );
@@ -189,6 +204,12 @@ export default function GeneralSettings() {
             desc="Display custom properties (e.g. engraving, gift message) under each product in the cart."
             checked={showLineItemProperties}
             onChange={setShowLineItemProperties}
+          />
+          <ToggleRow
+            label="Clickable Product Titles"
+            desc="Make product names in the cart clickable links that open the product page."
+            checked={clickableLineItems}
+            onChange={setClickableLineItems}
           />
           <ToggleRow
             label="Scrollable Line Items"
@@ -409,6 +430,58 @@ export default function GeneralSettings() {
         </s-stack>
       </s-section>
 
+      {/* ── Order Summary ── */}
+      <s-section heading="Order Summary">
+        <s-stack direction="block" gap="base">
+          <ToggleRow
+            label="Show Order Summary"
+            desc="Display a collapsible price breakdown (MRP, discounts, total) just above the checkout button."
+            checked={orderSummaryEnabled}
+            onChange={setOrderSummaryEnabled}
+          />
+        </s-stack>
+      </s-section>
+
+      {/* ── Add-to-Cart Behavior ── */}
+      <s-section heading="Add-to-Cart Behavior">
+        <s-stack direction="block" gap="base">
+          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+            Choose what happens when a customer clicks an Add-to-Cart button on your storefront.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[
+              { value: "drawer", label: "Open Side Cart", desc: "Slide open EdgeCart immediately after adding a product (default)." },
+              { value: "toast", label: "Show Toast Notification", desc: "Display a small popup confirming the product was added without opening the cart." },
+            ].map(opt => (
+              <label key={opt.value} style={{
+                display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px",
+                border: "1.5px solid " + (addToCartBehavior === opt.value ? "#008060" : "#e0e0e0"),
+                borderRadius: 10, background: addToCartBehavior === opt.value ? "#f0faf5" : "#fff",
+                cursor: "pointer", transition: "border-color 0.15s",
+              }}>
+                <input type="radio" name="addToCartBehavior" value={opt.value}
+                  checked={addToCartBehavior === opt.value}
+                  onChange={() => setAddToCartBehavior(opt.value)}
+                  style={{ marginTop: 2, accentColor: "#008060" }} />
+                <div>
+                  <strong style={{ fontSize: 13, display: "block", marginBottom: 2 }}>{opt.label}</strong>
+                  <span style={{ fontSize: 12, color: "#6b7280" }}>{opt.desc}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+          {addToCartBehavior === "toast" && (
+            <div>
+              <label style={labelStyle}>Toast Duration (seconds)</label>
+              <input type="number" value={addToCartToastSeconds}
+                onChange={e => setAddToCartToastSeconds(Math.min(10, Math.max(1, parseInt(e.target.value) || 3)))}
+                style={{ ...inputStyle, width: 100 }} min="1" max="10" />
+              <p style={helpText}>How long the "Added to cart" popup stays visible (1–10 seconds).</p>
+            </div>
+          )}
+        </s-stack>
+      </s-section>
+
       {/* ── Custom Code ── */}
       <s-section heading="Custom CSS &amp; JavaScript">
         <s-stack direction="block" gap="base">
@@ -417,6 +490,30 @@ export default function GeneralSettings() {
             colours, fonts, layout, or add any DOM manipulation — exactly like other
             side-cart apps. Changes apply to every customer on your store.
           </p>
+
+          {/* Cart Icon Selector */}
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4, color: "#374151" }}>
+              Custom Cart Icon Selector
+            </label>
+            <p style={{ fontSize: 12, color: "#9ca3af", margin: "0 0 8px" }}>
+              EdgeCart automatically detects Horizon, Tinker, Savor, Dawn, and other popular themes.
+              If your theme uses a different cart icon, paste its CSS selector here
+              (right-click the cart icon → Inspect → copy the unique class or ID).
+              Example: <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 3 }}>.my-theme__cart-btn</code>
+            </p>
+            <input
+              type="text"
+              value={customCartIconSelector}
+              onChange={e => setCustomCartIconSelector(e.target.value)}
+              placeholder="Leave blank to use automatic theme detection"
+              style={{
+                width: "100%", padding: "9px 12px", border: "1px solid #d1d5db",
+                borderRadius: 6, fontSize: 13, fontFamily: "monospace",
+                boxSizing: "border-box", outline: "none", color: "#111827",
+              }}
+            />
+          </div>
 
           {/* Custom CSS */}
           <div>

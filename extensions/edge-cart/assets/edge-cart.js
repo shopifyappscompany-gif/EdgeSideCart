@@ -29,8 +29,9 @@
   var freebieRetryAt       = {};   /* keyed by offer.id */
   var maxExceededNotified  = {};   /* keyed by offer.id — prevents toast spam */
   var tierUnlockedState    = {};   /* keyed by tier.id — fires confetti on unlock transition */
-  var ecHandlingAdd     = false;
-  var scarcityTimer     = null;
+  var ecHandlingAdd        = false;
+  var scarcityTimer        = null;
+  var orderSummaryOpen     = false;
 
   /* ===========================================================
      BOOT
@@ -51,8 +52,20 @@
         injectDynamicCSS();
         injectCustomCode();
         buildDOM();
+        replaceThemeCartIcon();
+        suppressThemeCart();
         attachGlobalListeners();
         initialized = true;
+
+        /* ── Public API — callable from console, GoKwik, or any 3rd-party script ── */
+        window.EdgeCart = {
+          open:    function () { loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); }); },
+          close:   closeCart,
+          toggle:  function () { if (isOpen) closeCart(); else window.EdgeCart.open(); },
+          refresh: function () { loadCart().then(function (c) { cart = c; render(); syncFreebie(); }); },
+          isOpen:  function () { return isOpen; },
+        };
+
         if (sessionStorage.getItem("ec-reopen-cart")) {
           sessionStorage.removeItem("ec-reopen-cart");
           setTimeout(openCart, 300);
@@ -91,7 +104,13 @@
     }).then(function (r) {
       ecHandlingAdd = false;
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.description || "Add failed"); });
-      return loadCart().then(function (c) { cart = c; document.dispatchEvent(new CustomEvent('cart:updated')); });
+      return r.json().then(function (addedItem) {
+        return loadCart().then(function (c) {
+          cart = c;
+          document.dispatchEvent(new CustomEvent('cart:updated'));
+          return addedItem;
+        });
+      });
     }).catch(function (err) {
       ecHandlingAdd = false;
       throw err;
@@ -260,6 +279,11 @@
 
     document.body.appendChild(overlay);
     document.body.appendChild(drawer);
+
+    /* Add-to-cart toast (outside the drawer so it's visible when cart is closed) */
+    var atcToastEl = make("div", "ec-atc-toast");
+    atcToastEl.id = "ec-atc-toast";
+    document.body.appendChild(atcToastEl);
 
     on(drawer, "click", handleDrawerClick);
     on(id("ec-close"), "click", closeCart);
@@ -471,10 +495,21 @@
       : (item.image || (freebie ? (freebieOffer.productImageUrl || "") : ""));
     var hasDisc = item.line_price < item.original_line_price;
     var isUpd   = updatingKeys[item.key];
+    var isFreebieLoading = freebie && freebieOffer && freebieAutoSync[freebieOffer.id];
     var showVar = settings.showVariantTitle !== false;
 
+    var qtyOrSpinner = isUpd
+      ? '<div class="ec-qty ec-qty--spin"><div class="ec-spin-circle"></div></div>'
+      : [
+          '<div class="ec-qty">',
+            '<button class="ec-qty__btn" data-action="dec" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity - 1) + '" aria-label="Decrease"' + (item.quantity <= 1 ? " disabled" : "") + '>−</button>',
+            '<span class="ec-qty__val">' + item.quantity + '</span>',
+            '<button class="ec-qty__btn" data-action="inc" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity + 1) + '" aria-label="Increase">+</button>',
+          '</div>',
+        ].join("");
+
     return [
-      '<div class="ec-item' + (isUpd ? " ec-item--updating" : "") + (freebie ? " ec-item--freebie" : "") + '" data-key="' + esc(item.key) + '">',
+      '<div class="ec-item' + (isFreebieLoading ? " ec-item--syncing" : "") + (freebie ? " ec-item--freebie" : "") + '" data-key="' + esc(item.key) + '">',
         '<div class="ec-item__img">',
           img
             ? '<img src="' + esc(img) + '" alt="' + esc(item.product_title) + '" loading="lazy">'
@@ -483,25 +518,23 @@
         '<div class="ec-item__body">',
           '<div class="ec-item__top">',
             '<div class="ec-item__info">',
-              '<p class="ec-item__title">' + esc(item.product_title) + '</p>',
+              settings.clickableLineItems !== false
+                ? '<a class="ec-item__title ec-item__title--link" href="' + esc(item.url || ("/products/" + (item.handle || ""))) + '">' + esc(item.product_title) + '</a>'
+                : '<p class="ec-item__title">' + esc(item.product_title) + '</p>',
               showVar && item.variant_title && item.variant_title !== "Default Title"
                 ? '<p class="ec-item__variant">' + esc(item.variant_title) + '</p>'
                 : "",
             '</div>',
             freebie
-              ? '<span class="ec-item__free-badge">FREE</span>'
+              ? (isFreebieLoading
+                  ? '<div class="ec-spin-circle ec-spin-circle--sm"></div>'
+                  : '<span class="ec-item__free-badge">FREE</span>')
               : '<button class="ec-item__remove" data-action="remove" data-key="' + esc(item.key) + '" aria-label="Remove">' + svgX() + '</button>',
           '</div>',
           '<div class="ec-item__bottom">',
             freebie
               ? '<span class="ec-item__gift-label">🎁 Free Gift</span>'
-              : [
-                '<div class="ec-qty">',
-                  '<button class="ec-qty__btn" data-action="dec" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity - 1) + '" aria-label="Decrease"' + (item.quantity <= 1 ? " disabled" : "") + '>−</button>',
-                  '<span class="ec-qty__val">' + item.quantity + '</span>',
-                  '<button class="ec-qty__btn" data-action="inc" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity + 1) + '" aria-label="Increase">+</button>',
-                '</div>',
-              ].join(""),
+              : qtyOrSpinner,
             '<div class="ec-item__price">',
               freebie
                 ? '<span class="ec-item__line ec-item__line--free">$0.00</span>'
@@ -598,30 +631,81 @@
       ].join("");
     }
 
-    /* Summary */
-    html += [
-      '<div class="ec-summary">',
+    /* Order Summary Dropdown */
+    if (settings.orderSummaryEnabled !== false) {
+      /* "saved so far" = automatic line-item discounts + any code discount */
+      var autoDisc    = cart.original_total_price - cart.total_price - savings;
+      var totalSaved  = (autoDisc > 0 ? autoDisc : 0) + savings;
+      /* Cart subtotal = what customer pays before any code discount */
+      var cartSubtotal = cart.total_price;
+
+      var panelRows = [
+        /* MRP total */
+        '<div class="ec-os__row">',
+          '<span class="ec-os__row-label">MRP total</span>',
+          '<span class="ec-os__row-price">' + money(cart.original_total_price) + '</span>',
+        '</div>',
+        /* Discount on MRP (automatic/line-item discounts) */
+        autoDisc > 0 ? [
+          '<div class="ec-os__row">',
+            '<span class="ec-os__row-label">Discount on MRP</span>',
+            '<span class="ec-os__row-green">−' + money(autoDisc) + '</span>',
+          '</div>',
+        ].join("") : "",
+        /* Cart subtotal */
+        '<div class="ec-os__row">',
+          '<span class="ec-os__row-label">Cart Subtotal</span>',
+          '<span class="ec-os__row-price">' + money(cartSubtotal) + '</span>',
+        '</div>',
+        /* Coupon / code discount */
         savings > 0 ? [
-          '<div class="ec-summary__row">',
-            '<span class="ec-summary__label">Subtotal</span>',
-            '<span class="ec-summary__price ec-summary__price--struck">' + money(subtotal) + '</span>',
+          '<div class="ec-os__row">',
+            '<span class="ec-os__row-label">Total discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span>',
+            '<span class="ec-os__row-green">−' + money(savings) + '</span>',
           '</div>',
-          '<div class="ec-summary__row ec-summary__row--savings">',
-            '<span class="ec-summary__label">Discount (' + esc(discountCode) + ')</span>',
-            '<span class="ec-summary__savings">−' + money(savings) + '</span>',
+        ].join("") : "",
+        /* Shipping */
+        '<div class="ec-os__row">',
+          '<span class="ec-os__row-label">Shipping Charges</span>',
+          '<span class="ec-os__row-green">Calculated at checkout</span>',
+        '</div>',
+        /* Total savings */
+        totalSaved > 0 ? [
+          '<div class="ec-os__row">',
+            '<span class="ec-os__row-label">Total savings</span>',
+            '<span class="ec-os__row-green">' + money(totalSaved) + '</span>',
           '</div>',
-          '<div class="ec-summary__row">',
-            '<span class="ec-summary__label ec-summary__label--total">Total</span>',
-            '<span class="ec-summary__price">' + money(finalTotal) + '</span>',
+        ].join("") : "",
+        /* Divider + Estimated Total */
+        '<div class="ec-os__divider"></div>',
+        '<div class="ec-os__row ec-os__row--total">',
+          '<span class="ec-os__row-total-label">Estimated Total</span>',
+          '<span class="ec-os__row-total-price">' + money(finalTotal) + '</span>',
+        '</div>',
+      ].join("");
+
+      /* "X saved so far" pill — only show if there are savings */
+      var savedPill = totalSaved > 0
+        ? '<span class="ec-os__saved-pill">' + money(totalSaved) + ' saved so far</span>'
+        : "";
+
+      html += [
+        '<div class="ec-os" id="ec-os">',
+          '<button class="ec-os__toggle" id="ec-os-toggle" type="button" aria-expanded="' + (orderSummaryOpen ? "true" : "false") + '">',
+            '<span class="ec-os__toggle-left">',
+              svgChevron(),
+              '<span class="ec-os__toggle-label">Order Summary</span>',
+              savedPill,
+            '</span>',
+          '</button>',
+          '<div class="ec-os__panel' + (orderSummaryOpen ? " ec-os__panel--open" : "") + '" id="ec-os-panel">',
+            panelRows,
           '</div>',
-        ].join("") : [
-          '<div class="ec-summary__row">',
-            '<span class="ec-summary__label">Subtotal</span>',
-            '<span class="ec-summary__price">' + money(subtotal) + '</span>',
-          '</div>',
-        ].join(""),
-        '<p class="ec-summary__note">Taxes & shipping calculated at checkout</p>',
-      '</div>',
+        '</div>',
+      ].join("");
+    }
+
+    html += [
       '<button class="ec-checkout-btn" id="ec-checkout">',
         'Checkout · ' + money(finalTotal),
       '</button>',
@@ -648,6 +732,22 @@
     var noteInput = id("ec-note-input");
     if (noteInput) {
       on(noteInput, "input", function () { orderNote = noteInput.value; });
+    }
+
+    /* Bind order summary toggle */
+    var osToggle = id("ec-os-toggle");
+    var osPanel  = id("ec-os-panel");
+    if (osToggle && osPanel) {
+      on(osToggle, "click", function () {
+        orderSummaryOpen = !orderSummaryOpen;
+        osPanel.classList.toggle("ec-os__panel--open", orderSummaryOpen);
+        osToggle.setAttribute("aria-expanded", orderSummaryOpen ? "true" : "false");
+        var chevron = osToggle.querySelector(".ec-os__chevron");
+        if (chevron) chevron.style.transform = orderSummaryOpen ? "rotate(180deg)" : "";
+      });
+      /* Sync chevron if already open on re-render */
+      var chevronInit = osToggle.querySelector(".ec-os__chevron");
+      if (chevronInit && orderSummaryOpen) chevronInit.style.transform = "rotate(180deg)";
     }
 
     /* Bind checkout */
@@ -686,6 +786,57 @@
       3500,
       offer ? offer.confettiEnabled !== false : settings.freebieConfettiEnabled !== false
     );
+  }
+
+  /* ── Add-to-cart toast ─────────────────────────────────── */
+  var atcToastTimer = null;
+  function showAddToCartToast(item) {
+    var el = id("ec-atc-toast");
+    if (!el) return;
+    var img = (item && (item.featured_image && item.featured_image.url || item.image)) || "";
+    var title = (item && item.product_title) || "Item";
+    el.innerHTML = [
+      img ? '<img class="ec-atc-toast__img" src="' + esc(img) + '" alt="">' : '<div class="ec-atc-toast__img-placeholder"></div>',
+      '<div class="ec-atc-toast__body">',
+        '<span class="ec-atc-toast__check">✓</span>',
+        '<div>',
+          '<strong class="ec-atc-toast__title">' + esc(title) + '</strong>',
+          '<span class="ec-atc-toast__sub">Added to cart</span>',
+        '</div>',
+      '</div>',
+      '<button class="ec-atc-toast__view" id="ec-atc-view-cart">View Cart</button>',
+    ].join("");
+    el.classList.add("ec-atc-toast--visible");
+    var viewBtn = id("ec-atc-view-cart");
+    if (viewBtn) {
+      viewBtn.addEventListener("click", function () {
+        el.classList.remove("ec-atc-toast--visible");
+        openCart();
+      });
+    }
+    if (atcToastTimer) clearTimeout(atcToastTimer);
+    var secs = (settings && settings.addToCartToastSeconds) || 3;
+    atcToastTimer = setTimeout(function () {
+      el.classList.remove("ec-atc-toast--visible");
+      atcToastTimer = null;
+    }, secs * 1000);
+  }
+
+  function handlePostAdd(addedItem, cartAlreadyLoaded) {
+    function proceed() {
+      syncCartBadges();
+      if (settings && settings.addToCartBehavior === "toast") {
+        showAddToCartToast(addedItem);
+      } else {
+        render(); openCart();
+      }
+      syncFreebie();
+    }
+    if (cartAlreadyLoaded) {
+      proceed();
+    } else {
+      loadCart().then(function (c) { cart = c; proceed(); });
+    }
   }
 
   /* ── Confetti ──────────────────────────────────────────── */
@@ -810,6 +961,7 @@
       if (Date.now() < (freebieRetryAt[offer.id] || 0)) return;
 
       freebieAutoSync[offer.id] = true;
+      if (isOpen) renderBody();
       cartAdd(numId, 1, { _edge_cart_freebie: "true" })
         .then(function () {
           freebieAutoSync[offer.id] = false;
@@ -827,6 +979,7 @@
 
     } else if (!unlocked && freebieItem) {
       freebieAutoSync[offer.id] = true;
+      if (isOpen) renderBody();
       cartChange(freebieItem.key, 0)
         .then(function () {
           freebieAutoSync[offer.id] = false;
@@ -1122,6 +1275,145 @@
   }
 
   /* ===========================================================
+     THEME CART ICON REPLACEMENT
+     Hides the theme's native cart icon and injects our own
+     fancy button in its place, complete with a live item badge.
+  =========================================================== */
+  function replaceThemeCartIcon() {
+    /* Theme name → CSS selector for that theme's cart icon button/link.
+       All three (Horizon, Tinker, Savor) share the same class. */
+    var THEME_MAP = {
+      "horizon": ".header-actions__cart-icon",
+      "tinker":  ".header-actions__cart-icon",
+      "savor":   ".header-actions__cart-icon",
+      "dawn":    "#cart-icon-bubble",
+      "sense":   "#cart-icon-bubble",
+      "craft":   ".header__cart",
+      "studio":  ".header__cart",
+      "spotlight": ".header__cart",
+      "refresh": ".cart__icon",
+      "crave":   ".js-cart-open",
+      "origin":  ".header__cart-toggle",
+      "impulse": ".site-header__cart",
+      "turbo":   ".site-header__cart",
+    };
+
+    var themeName = (window.Shopify && window.Shopify.theme && window.Shopify.theme.name)
+      ? window.Shopify.theme.name.toLowerCase().trim()
+      : "";
+
+    /* Priority: 1. merchant custom, 2. built-in map, 3. broad fallbacks */
+    var selector = (settings.customCartIconSelector && settings.customCartIconSelector.trim())
+      || THEME_MAP[themeName]
+      || null;
+
+    var original = selector ? document.querySelector(selector) : null;
+
+    /* Broad fallback chain if nothing matched yet */
+    if (!original) {
+      var fallbacks = [
+        ".header-actions__cart-icon",
+        "#cart-icon-bubble",
+        ".header__cart",
+        ".cart-link",
+        ".site-header__cart",
+        "[data-cart-toggle]",
+      ];
+      for (var fi = 0; fi < fallbacks.length; fi++) {
+        original = document.querySelector(fallbacks[fi]);
+        if (original && !original.closest("#ec-cart")) break;
+        original = null;
+      }
+    }
+
+    if (!original || original.id === "ec-cart-trigger") return;
+
+    /* Walk UP to the real clickable ancestor (button or link) that the theme
+       attaches its click handler to. This is the element we must hide — hiding
+       only the inner icon leaves the outer button active and also causes our
+       injected button to be nested inside the theme's button (invalid HTML). */
+    var hideTarget = original.closest("button, a[href]") || original;
+
+    /* Safety: never hide something that is (or contains) our own drawer */
+    if (hideTarget.closest("#ec-cart")) return;
+
+    /* Build our button */
+    var btn = document.createElement("button");
+    btn.id        = "ec-cart-trigger";
+    btn.className = "ec-cart-trigger";
+    btn.setAttribute("type", "button");
+    btn.setAttribute("aria-label", "Open cart");
+    btn.innerHTML = svgCartBag() + '<span class="ec-cart-trigger__badge" id="ec-trigger-badge"></span>';
+
+    btn.addEventListener("click", function () {
+      loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
+    });
+
+    function applyHide() {
+      hideTarget.style.setProperty("display", "none", "important");
+    }
+
+    function ensureButton() {
+      if (!document.getElementById("ec-cart-trigger")) {
+        if (hideTarget.parentNode) {
+          hideTarget.parentNode.insertBefore(btn, hideTarget.nextSibling);
+        }
+      }
+    }
+
+    applyHide();
+
+    /* Insert as SIBLING of the hidden target — not inside it */
+    hideTarget.parentNode.insertBefore(btn, hideTarget.nextSibling);
+
+    /* Watch for the theme's JS resetting display or removing our button.
+       Themes often re-init their header after page load, wiping inline styles. */
+    var obs = new MutationObserver(function () {
+      /* Re-apply hide if theme cleared our inline display:none */
+      if (hideTarget.style.display !== "none") applyHide();
+      /* Re-insert our button if theme rebuilt the DOM and removed it */
+      ensureButton();
+    });
+
+    /* Observe style/class changes on the hidden element */
+    obs.observe(hideTarget, { attributes: true, attributeFilter: ["style", "class"] });
+
+    /* Observe the parent container for child list mutations (node removed/re-added) */
+    var parent = hideTarget.parentNode;
+    if (parent) obs.observe(parent, { childList: true });
+
+    /* Sync badge immediately if cart is already loaded */
+    syncCartBadges();
+  }
+
+  /* ===========================================================
+     THEME NATIVE CART SUPPRESSION
+     Disables the built-in cart drawer in Dawn, Horizon, Tinker,
+     Craft, Crave, etc. so EdgeCart is the only cart experience.
+  =========================================================== */
+  function suppressThemeCart() {
+    /* Only intercept custom events that themes dispatch programmatically
+       (e.g. after add-to-cart via fetch). We no longer hide the drawer
+       element itself — that caused flicker because the theme's own JS
+       overrides inline styles. The trigger button is already hidden by
+       replaceThemeCartIcon(), so the drawer can never open via click. */
+    var CART_OPEN_EVENTS = [
+      "cart:open", "cart:show", "cart:toggle",
+      "dispatch:cart-drawer:open", "cartdrawer:open",
+      "cart-drawer:open", "CartDrawer:open",
+      "theme:cart:open", "cart-open",
+    ];
+    CART_OPEN_EVENTS.forEach(function (evName) {
+      [window, document].forEach(function (target) {
+        target.addEventListener(evName, function (e) {
+          e.stopImmediatePropagation();
+          openCart();
+        }, true);
+      });
+    });
+  }
+
+  /* ===========================================================
      EVENT LISTENERS
   =========================================================== */
   function attachGlobalListeners() {
@@ -1134,8 +1426,9 @@
         if (url && url.includes("/cart/add")) {
           promise.then(function (res) {
             if (res && res.ok) {
+              var cloned = res.clone();
               setTimeout(function () {
-                loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
+                cloned.json().then(function (item) { handlePostAdd(item); }).catch(function () { handlePostAdd(null); });
               }, 50);
             }
           }).catch(function () {});
@@ -1156,9 +1449,9 @@
         var xhr = this;
         xhr.addEventListener("load", function () {
           if (xhr.status >= 200 && xhr.status < 300) {
-            setTimeout(function () {
-              loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
-            }, 50);
+            var item = null;
+            try { item = JSON.parse(xhr.responseText); } catch (_) {}
+            setTimeout(function () { handlePostAdd(item); }, 50);
           }
         }, { once: true });
       }
@@ -1182,21 +1475,37 @@
 
       setSubmitBtnLoading(form, true);
       cartAdd(vid, qty, {})
-        .then(function () { render(); openCart(); syncFreebie(); })
+        .then(function (item) { handlePostAdd(item, true); })
         .catch(function () { form.submit(); })
         .finally(function () { setSubmitBtnLoading(form, false); });
     }, true);
 
-    /* Cart icon / /cart link clicks */
+    /* Cart icon / /cart link clicks — capture phase so we run BEFORE theme handlers */
+    var CART_ICON_SEL = [
+      /* Universal */
+      'a[href="/cart"]', 'a[href^="/cart?"]',
+      /* Attribute-based (Dawn, Horizon, Craft) */
+      '[data-cart-toggle]', '[data-action="toggle-cart"]',
+      '[data-open="cart-drawer"]', '[aria-controls="CartDrawer"]',
+      '[aria-controls="cart-drawer"]', '[aria-controls="cart-notification"]',
+      /* Class-based (various themes) */
+      '.cart-link', '.cart-toggle', '.header__cart', '.cart-icon-bubble',
+      '.cart-count-bubble', '.header-cart', '.nav__icon--cart',
+      '.js-cart-open', '.js-mini-cart-toggle', '.site-cart__btn',
+      /* Custom element / ID based */
+      'cart-icon-bubble', '#cart-icon-bubble',
+      /* Tinker-specific */
+      '[data-cart]', '.icon-cart',
+    ].join(", ");
+
     document.addEventListener("click", function (e) {
       if (e.target.closest("#ec-cart")) return;
-      var link = e.target.closest(
-        'a[href="/cart"], a[href^="/cart?"], [data-cart-toggle], .cart-link, .header__cart, .cart-icon-bubble'
-      );
+      var link = e.target.closest(CART_ICON_SEL);
       if (!link) return;
       e.preventDefault();
+      e.stopImmediatePropagation();
       openCart();
-    }, false);
+    }, true); /* capture:true — fires before any theme bubble listener */
 
     /* Escape key */
     document.addEventListener("keydown", function (e) {
@@ -1208,7 +1517,7 @@
       loadCart().then(function (c) { cart = c; if (isOpen) render(); syncFreebie(); });
     });
     document.addEventListener("theme:cart:add", function () {
-      loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
+      handlePostAdd(null, false);
     });
     document.addEventListener("cart:refresh", function () {
       loadCart().then(function (c) { cart = c; if (isOpen) render(); syncFreebie(); });
@@ -1321,12 +1630,20 @@
 
   function syncCartBadges() {
     var count = (cart && cart.item_count) || 0;
+    /* Update theme's own badge elements */
     document.querySelectorAll(
       "[data-cart-count], .cart-count, #CartCount, .cart-item-count, .header__cart-bubble, .cart-bubble"
     ).forEach(function (el) {
       el.textContent   = count;
       el.style.display = count > 0 ? "" : "none";
     });
+    /* Update our injected trigger badge */
+    var badge = id("ec-trigger-badge");
+    if (badge) {
+      badge.textContent = count > 0 ? (count > 99 ? "99+" : String(count)) : "";
+      if (count > 0) badge.classList.add("ec-cart-trigger__badge--show");
+      else            badge.classList.remove("ec-cart-trigger__badge--show");
+    }
   }
 
   function checkoutUrl() {
@@ -1386,8 +1703,23 @@
   function svgClose() {
     return '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M15 5L5 15M5 5l10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
+  function svgCartBag() {
+    return [
+      '<svg class="ec-cart-trigger__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"',
+        ' fill="none" stroke="currentColor" stroke-width="1.75"',
+        ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+        '<path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/>',
+        '<line x1="3" y1="6" x2="21" y2="6"/>',
+        '<path d="M16 10a4 4 0 01-8 0"/>',
+      '</svg>',
+    ].join("");
+  }
+
   function svgX() {
     return '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11 3L3 11M3 3l8 8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>';
+  }
+  function svgChevron() {
+    return '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
   function svgCart(cls) {
     return '<svg class="' + cls + '" viewBox="0 0 64 64" fill="none" aria-hidden="true"><circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="2"/><path d="M18 24h28l-3.5 16H21.5L18 24z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M26 24v-4a6 6 0 0112 0v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';

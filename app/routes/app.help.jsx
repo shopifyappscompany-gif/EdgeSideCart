@@ -105,21 +105,31 @@ const styles = {
   },
 };
 
+function openExternal(url) {
+  try {
+    window.top.open(url, "_blank");
+  } catch (_) {
+    window.open(url, "_blank");
+  }
+}
+
+function openMailto(email, subject) {
+  var url = "mailto:" + email + "?subject=" + encodeURIComponent(subject);
+  try {
+    window.top.location.href = url;
+  } catch (_) {
+    window.location.href = url;
+  }
+}
+
 export default function HelpPage() {
   const { shop } = useLoaderData();
   const fetcher = useFetcher();
   const submitted = fetcher.data?.success;
   const error = fetcher.data?.error;
-  const isOwner = shop === OWNER_SHOP;
 
   return (
     <s-page heading="Help & Support">
-      {isOwner && (
-        <s-button slot="primary-action" url="/app/support-inbox" variant="primary" suppressHydrationWarning>
-          View Support Inbox
-        </s-button>
-      )}
-
       {/* Three action cards */}
       <s-section heading="How can we help you?">
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
@@ -130,9 +140,12 @@ export default function HelpPage() {
             <p style={styles.cardDesc}>
               Have a question or need help with setup? Fill out the form below and we'll get back to you shortly.
             </p>
-            <a href="#msg-form" style={{ ...styles.cardBtn, background: "#2563eb" }}>
+            <button
+              onClick={() => document.getElementById("msg-form")?.scrollIntoView({ behavior: "smooth" })}
+              style={{ ...styles.cardBtn, background: "#2563eb" }}
+            >
               Send Message
-            </a>
+            </button>
           </div>
 
           {/* Schedule a Demo */}
@@ -142,14 +155,12 @@ export default function HelpPage() {
             <p style={styles.cardDesc}>
               Get a complete walkthrough of EdgeCart features and learn best practices to boost your store's average order value.
             </p>
-            <a
-              href={CALENDLY_URL}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              onClick={() => openExternal(CALENDLY_URL)}
               style={{ ...styles.cardBtn, background: "#7c3aed" }}
             >
               Book a Call
-            </a>
+            </button>
           </div>
 
           {/* Email Support */}
@@ -159,12 +170,12 @@ export default function HelpPage() {
             <p style={styles.cardDesc}>
               Reach our support team directly. We typically respond within 24 hours on business days.
             </p>
-            <a
-              href={`mailto:${SUPPORT_EMAIL}?subject=EdgeCart Support — ${shop}`}
+            <button
+              onClick={() => openMailto(SUPPORT_EMAIL, "EdgeCart Support — " + shop)}
               style={{ ...styles.cardBtn, background: "#059669" }}
             >
               Email Us
-            </a>
+            </button>
           </div>
         </div>
       </s-section>

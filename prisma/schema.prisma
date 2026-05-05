@@ -109,6 +109,19 @@ model CartSettings {
   customCss String @default("")
   customJs  String @default("")
 
+  // Custom cart icon selector (for themes not in the built-in map)
+  customCartIconSelector String @default("")
+
+  // Line item title links
+  clickableLineItems Boolean @default(true)
+
+  // Add-to-cart behavior: "drawer" (open side cart) | "toast" (show popup)
+  addToCartBehavior    String @default("drawer")
+  addToCartToastSeconds Int   @default(3)
+
+  // Order summary dropdown above checkout button
+  orderSummaryEnabled Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
