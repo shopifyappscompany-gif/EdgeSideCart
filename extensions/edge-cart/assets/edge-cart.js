@@ -605,7 +605,7 @@
       ? '<div class="ec-qty ec-qty--spin"><div class="ec-spin-circle"></div></div>'
       : [
           '<div class="ec-qty">',
-            '<button class="ec-qty__btn" data-action="' + (item.quantity <= 1 ? "remove" : "dec") + '" data-key="' + esc(item.key) + '" data-qty="0" aria-label="' + (item.quantity <= 1 ? "Remove" : "Decrease") + '">−</button>',
+            '<button class="ec-qty__btn" data-action="' + (item.quantity <= 1 ? "remove" : "dec") + '" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity - 1) + '" aria-label="' + (item.quantity <= 1 ? "Remove" : "Decrease") + '">−</button>',
             '<input class="ec-qty__val ec-qty__input" type="number" min="1" value="' + item.quantity + '" data-key="' + esc(item.key) + '" aria-label="Quantity">',
             '<button class="ec-qty__btn" data-action="inc" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity + 1) + '" aria-label="Increase">+</button>',
           '</div>',
