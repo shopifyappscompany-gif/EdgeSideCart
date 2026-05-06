@@ -15,6 +15,7 @@ export const loader = async ({ request }) => {
     bannerEnabled: settings?.bannerEnabled ?? true,
     discountEnabled: settings?.discountEnabled ?? true,
     tieredRewardsEnabled: settings?.tieredRewardsEnabled ?? false,
+    planName: settings?.planName ?? "starter",
   };
 };
 
@@ -174,6 +175,10 @@ export default function Dashboard() {
   const data = useLoaderData();
   const navigate = useNavigate();
 
+  const planLabels = { starter: "Starter — Free", growth: "Growth — $7/mo", enterprise: "Enterprise — $25/mo" };
+  const planColors = { starter: "#475569", growth: "#2563eb", enterprise: "#7c3aed" };
+  const planKey = data.planName || "starter";
+
   const statuses = [
     { label: "Side Cart", on: data.enabled },
     { label: "Banner", on: data.bannerEnabled },
@@ -189,8 +194,16 @@ export default function Dashboard() {
       <s-section>
         <div style={s.hero}>
           <div style={{ flex: 1 }}>
-            <div style={s.heroBadge}>
-              <span style={{ color: "#4ade80" }}>●</span> EdgeCart is active
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+              <div style={s.heroBadge}>
+                <span style={{ color: "#4ade80" }}>●</span> EdgeCart is active
+              </div>
+              <div
+                onClick={() => navigate("/app/billing")}
+                style={{ ...s.heroBadge, background: planColors[planKey], borderColor: planColors[planKey], cursor: "pointer" }}
+              >
+                ⚡ {planLabels[planKey]}
+              </div>
             </div>
             <h1 style={s.heroTitle}>Welcome to EdgeCart</h1>
             <p style={s.heroSub}>

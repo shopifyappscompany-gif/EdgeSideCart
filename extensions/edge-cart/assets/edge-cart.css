@@ -1102,6 +1102,73 @@ a.ec-item__title--link:hover {
 }
 
 /* ----------------------------------------------------------
+   One-Click Upsell (below line items)
+   ---------------------------------------------------------- */
+.ec-ocu {
+  margin: 6px 14px 0;
+  border-top: 1px solid #f0f0f0;
+  padding: 12px 0 4px;
+}
+.ec-ocu__heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ec-ocu__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  padding: 10px 12px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ec-ocu__label:hover {
+  border-color: #008060;
+  background: #f0faf5;
+}
+.ec-ocu__check {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  accent-color: #008060;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ec-ocu__img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  border: 1px solid #f0f0f0;
+}
+.ec-ocu__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.ec-ocu__add-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111;
+}
+.ec-ocu__name {
+  font-size: 12px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------
    Checkout Button
    ---------------------------------------------------------- */
 .ec-checkout-btn {
@@ -1169,6 +1236,396 @@ a.ec-item__title--link:hover {
 
 @keyframes ec-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ----------------------------------------------------------
+   Free Shipping Progress Bar
+   ---------------------------------------------------------- */
+.ec-free-ship {
+  padding: 12px 20px 14px;
+  border-bottom: 1px solid #f0f0f0;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+}
+.ec-free-ship__msg {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #166534;
+  text-align: center;
+}
+.ec-free-ship__msg--done {
+  color: #15803d;
+}
+.ec-free-ship__track {
+  height: 7px;
+  background: #bbf7d0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ec-free-ship__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #16a34a);
+  border-radius: 4px;
+  transition: width 0.5s var(--ec-ease);
+}
+
+/* ----------------------------------------------------------
+   Trust Badges
+   ---------------------------------------------------------- */
+.ec-trust {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 20px 18px;
+}
+.ec-trust__badge {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #6b7280;
+}
+.ec-trust__icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.ec-trust__text {
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------
+   Sticky Add-to-Cart Bar
+   ---------------------------------------------------------- */
+.ec-sticky-atc {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: calc(var(--ec-z) - 2);
+  background: #fff;
+  border-top: 1px solid #e5e7eb;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.10);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 10px 20px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.ec-sticky-atc--visible {
+  transform: translateY(0);
+}
+.ec-sticky-atc__inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+.ec-sticky-atc__title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #111;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ec-sticky-atc__btn {
+  flex-shrink: 0;
+  padding: 12px 24px;
+  background: var(--ec-primary, #111827);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.ec-sticky-atc__btn:hover { opacity: 0.88; }
+.ec-sticky-atc__btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ----------------------------------------------------------
+   Express Checkout Buttons
+   ---------------------------------------------------------- */
+.ec-express {
+  padding: 0 20px 14px;
+}
+.ec-express__divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #9ca3af;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+.ec-express__divider::before,
+.ec-express__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
+}
+.ec-express__row {
+  display: flex;
+  gap: 8px;
+}
+.ec-express__btn {
+  flex: 1;
+  display: block;
+  padding: 11px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.ec-express__btn:hover { opacity: 0.85; }
+.ec-express__shop-pay {
+  background: #5a31f4;
+  color: #fff;
+}
+.ec-express__apple-pay {
+  background: #000;
+  color: #fff;
+}
+.ec-express__google-pay {
+  background: #fff;
+  color: #111;
+  border: 1.5px solid #e0e0e0;
+}
+
+/* ----------------------------------------------------------
+   Volume Discounts
+   ---------------------------------------------------------- */
+.ec-vd {
+  padding: 14px 20px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fefce8;
+}
+.ec-vd__title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #92400e;
+}
+.ec-vd__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ec-vd__cell {
+  padding: 5px 8px;
+  color: #374151;
+}
+.ec-vd__cell--pct {
+  font-weight: 700;
+  color: #059669;
+  text-align: right;
+}
+.ec-vd__row--active .ec-vd__cell {
+  color: #065f46;
+  background: #d1fae5;
+}
+.ec-vd__row--active .ec-vd__cell:first-child {
+  border-radius: 4px 0 0 4px;
+}
+.ec-vd__row--active .ec-vd__cell:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+/* ----------------------------------------------------------
+   Gift Wrap (same pattern as OCU)
+   ---------------------------------------------------------- */
+.ec-gw {
+  margin: 6px 14px 0;
+  border-top: 1px solid #f0f0f0;
+  padding: 12px 0 4px;
+}
+.ec-gw__heading {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ec-gw__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  padding: 10px 12px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ec-gw__label:hover {
+  border-color: #008060;
+  background: #f0faf5;
+}
+.ec-gw__check {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  accent-color: #008060;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ec-gw__img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  border: 1px solid #f0f0f0;
+}
+.ec-gw__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.ec-gw__add-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111;
+}
+.ec-gw__name {
+  font-size: 12px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------
+   Stock Scarcity Badge on line items
+   ---------------------------------------------------------- */
+.ec-item__scarcity {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 7px;
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------
+   Recently Viewed (empty cart)
+   ---------------------------------------------------------- */
+.ec-rv {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px 24px;
+  gap: 16px;
+}
+.ec-rv__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  align-self: flex-start;
+  width: 100%;
+}
+.ec-rv__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+.ec-rv-card {
+  display: flex;
+  flex-direction: column;
+  border: 1.5px solid #efefef;
+  border-radius: 10px;
+  overflow: hidden;
+  text-decoration: none;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ec-rv-card:hover {
+  border-color: #ddd;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+.ec-rv-card__img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  background: #f0f0f0;
+}
+.ec-rv-card__img-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  background: linear-gradient(135deg, #f0f0f0, #e0e0e0);
+}
+.ec-rv-card__body {
+  padding: 8px;
+}
+.ec-rv-card__name {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #111;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.35;
+}
+.ec-rv-card__price {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #111;
+}
+
+/* ----------------------------------------------------------
+   Cart Share Link
+   ---------------------------------------------------------- */
+.ec-cart-share {
+  padding: 4px 20px 12px;
+  text-align: center;
+}
+.ec-cart-share__btn {
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  transition: color 0.15s, background 0.15s;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.ec-cart-share__btn:hover {
+  color: #111;
+  background: #f5f5f5;
 }
 
 /* ----------------------------------------------------------

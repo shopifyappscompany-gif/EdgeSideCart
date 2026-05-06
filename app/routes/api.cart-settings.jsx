@@ -61,6 +61,59 @@ const DEFAULT_SETTINGS = {
   addToCartBehavior: "drawer",
   addToCartToastSeconds: 3,
   orderSummaryEnabled: true,
+  ocuEnabled: false,
+  ocuHeading: "Complete your order",
+  ocuLabel: "Add to your order",
+  ocuHideWhenInCart: true,
+  ocuProductVariantId: "",
+  ocuProductTitle: "",
+  ocuProductImageUrl: "",
+  ocuProductPrice: 0,
+
+  freeShippingBarEnabled: false,
+  freeShippingThreshold: 50,
+  freeShippingText: "Add {{amount}} more for FREE shipping!",
+  freeShippingUnlockedText: "You've unlocked free shipping!",
+
+  trustBadgesEnabled: false,
+  trustBadges: [
+    { id: "1", icon: "🔒", text: "Secure Checkout", enabled: true },
+    { id: "2", icon: "↩️", text: "Free Returns", enabled: true },
+    { id: "3", icon: "✅", text: "Money-Back Guarantee", enabled: true },
+    { id: "4", icon: "💬", text: "24/7 Support", enabled: true },
+  ],
+
+  stickyAtcEnabled: false,
+  stickyAtcText: "Add to Cart",
+
+  expressCheckoutEnabled: false,
+  expressCheckoutShopPay: true,
+  expressCheckoutApplePay: true,
+  expressCheckoutGooglePay: false,
+
+  volumeDiscountEnabled: false,
+  volumeDiscountTitle: "Buy more, save more!",
+  volumeDiscounts: [],
+
+  giftWrapEnabled: false,
+  giftWrapHeading: "Gift Options",
+  giftWrapLabel: "Add gift wrap",
+  giftWrapHideWhenInCart: true,
+  giftWrapProductVariantId: "",
+  giftWrapProductTitle: "",
+  giftWrapProductImageUrl: "",
+  giftWrapPrice: 0,
+
+  stockScarcityEnabled: false,
+  stockScarcityThreshold: 5,
+  stockScarcityText: "Only {{count}} left!",
+
+  recentlyViewedEnabled: false,
+  recentlyViewedTitle: "You might also like",
+  recentlyViewedLimit: 4,
+
+  cartShareEnabled: false,
+  cartShareText: "Share your cart",
 };
 
 export const loader = async ({ request }) => {
@@ -110,6 +163,8 @@ export const loader = async ({ request }) => {
       upsellTriggerCollectionIds: safeParseJSON(settings.upsellTriggerCollectionIds, []),
       tieredRewards: safeParseJSON(settings.tieredRewards, []),
       freebieOffers: buildFreebieOffers(settings),
+      trustBadges: safeParseJSON(settings.trustBadges, DEFAULT_SETTINGS.trustBadges),
+      volumeDiscounts: safeParseJSON(settings.volumeDiscounts, []),
     };
 
     return new Response(JSON.stringify(payload), {

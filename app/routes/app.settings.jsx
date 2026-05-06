@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -45,6 +45,14 @@ export const action = async ({ request }) => {
     addToCartBehavior:       String(form.get("addToCartBehavior") || "drawer"),
     addToCartToastSeconds:   parseInt(form.get("addToCartToastSeconds") || "3", 10),
     orderSummaryEnabled:     form.get("orderSummaryEnabled") === "true",
+    ocuEnabled:              form.get("ocuEnabled") === "true",
+    ocuHeading:              String(form.get("ocuHeading") || "Complete your order"),
+    ocuLabel:                String(form.get("ocuLabel") || "Add to your order"),
+    ocuHideWhenInCart:       form.get("ocuHideWhenInCart") === "true",
+    ocuProductVariantId:     String(form.get("ocuProductVariantId") || ""),
+    ocuProductTitle:         String(form.get("ocuProductTitle") || ""),
+    ocuProductImageUrl:      String(form.get("ocuProductImageUrl") || ""),
+    ocuProductPrice:         parseInt(form.get("ocuProductPrice") || "0", 10),
   };
 
   await prisma.cartSettings.upsert({
@@ -95,10 +103,95 @@ export default function GeneralSettings() {
   const [tieredRewards,           setTieredRewards]           = useState(() => {
     try { return JSON.parse(s.tieredRewards || "[]"); } catch { return []; }
   });
+  const [ocuEnabled,         setOcuEnabled]         = useState(s.ocuEnabled ?? false);
+  const [ocuHeading,         setOcuHeading]         = useState(s.ocuHeading ?? "Complete your order");
+  const [ocuLabel,           setOcuLabel]           = useState(s.ocuLabel ?? "Add to your order");
+  const [ocuHideWhenInCart,  setOcuHideWhenInCart]  = useState(s.ocuHideWhenInCart ?? true);
+  const [ocuProduct,         setOcuProduct]         = useState(
+    s.ocuProductVariantId ? {
+      variantId: s.ocuProductVariantId,
+      title: s.ocuProductTitle || "",
+      imageUrl: s.ocuProductImageUrl || "",
+      price: s.ocuProductPrice || 0,
+    } : null
+  );
+
+  // ── Dirty tracking (Strict Mode safe) ──────────────────
+  function snap() {
+    return JSON.stringify({
+      enabled, headerText, primaryColor,
+      bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
+      discountEnabled, autoDiscountEnabled, autoDiscountCode,
+      orderNotesEnabled, showVariantTitle,
+      scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
+      tieredRewardsEnabled, tieredRewards,
+      scrollableItems, showLineItemProperties, blockCartPage,
+      customCss, customJs, customCartIconSelector,
+      clickableLineItems, addToCartBehavior, addToCartToastSeconds,
+      orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct,
+    });
+  }
+  const savedSnap = useRef(snap());
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    if (fetcher.data?.success) shopify.toast.show("Settings saved!");
+    setIsDirty(snap() !== savedSnap.current);
+  }, [enabled, headerText, primaryColor, bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
+      discountEnabled, autoDiscountEnabled, autoDiscountCode, orderNotesEnabled, showVariantTitle,
+      scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
+      tieredRewardsEnabled, tieredRewards, scrollableItems, showLineItemProperties, blockCartPage,
+      customCss, customJs, customCartIconSelector, clickableLineItems, addToCartBehavior,
+      addToCartToastSeconds, orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct]);
+
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      shopify.toast.show("Settings saved!");
+      savedSnap.current = snap();
+      setIsDirty(false);
+    }
   }, [fetcher.data]);
+
+  function handleDiscard() {
+    setEnabled(s.enabled ?? true);
+    setHeaderText(s.headerText ?? "Your Cart");
+    setPrimaryColor(s.primaryColor ?? "#000000");
+    setBannerEnabled(s.bannerEnabled ?? true);
+    setBannerText(s.bannerText ?? "🎉 Free shipping on orders over $50!");
+    setBannerBgColor(s.bannerBgColor ?? "#1a1a1a");
+    setBannerTextColor(s.bannerTextColor ?? "#ffffff");
+    setDiscountEnabled(s.discountEnabled ?? true);
+    setAutoDiscountEnabled(s.autoDiscountEnabled ?? false);
+    setAutoDiscountCode(s.autoDiscountCode ?? "");
+    setOrderNotesEnabled(s.orderNotesEnabled ?? false);
+    setShowVariantTitle(s.showVariantTitle ?? true);
+    setScarcityEnabled(s.scarcityEnabled ?? false);
+    setScarcityText(s.scarcityText ?? "⏰ Offer ends in:");
+    setScarcityMinutes(s.scarcityMinutes ?? 15);
+    setScarcityBgColor(s.scarcityBgColor ?? "#e53e3e");
+    setScarcityTextColor(s.scarcityTextColor ?? "#ffffff");
+    setTieredRewardsEnabled(s.tieredRewardsEnabled ?? false);
+    setTieredRewards(() => { try { return JSON.parse(s.tieredRewards || "[]"); } catch { return []; } });
+    setScrollableItems(s.scrollableItems ?? true);
+    setShowLineItemProperties(s.showLineItemProperties ?? false);
+    setBlockCartPage(s.blockCartPage ?? false);
+    setCustomCss(s.customCss ?? "");
+    setCustomJs(s.customJs ?? "");
+    setCustomCartIconSelector(s.customCartIconSelector ?? "");
+    setClickableLineItems(s.clickableLineItems ?? true);
+    setAddToCartBehavior(s.addToCartBehavior ?? "drawer");
+    setAddToCartToastSeconds(s.addToCartToastSeconds ?? 3);
+    setOrderSummaryEnabled(s.orderSummaryEnabled ?? true);
+    setOcuEnabled(s.ocuEnabled ?? false);
+    setOcuHeading(s.ocuHeading ?? "Complete your order");
+    setOcuLabel(s.ocuLabel ?? "Add to your order");
+    setOcuHideWhenInCart(s.ocuHideWhenInCart ?? true);
+    setOcuProduct(s.ocuProductVariantId ? {
+      variantId: s.ocuProductVariantId,
+      title: s.ocuProductTitle || "",
+      imageUrl: s.ocuProductImageUrl || "",
+      price: s.ocuProductPrice || 0,
+    } : null);
+  }
 
   function handleSubmit(e) {
     e?.preventDefault();
@@ -133,6 +226,14 @@ export default function GeneralSettings() {
         addToCartBehavior,
         addToCartToastSeconds:   String(addToCartToastSeconds),
         orderSummaryEnabled:     String(orderSummaryEnabled),
+        ocuEnabled:              String(ocuEnabled),
+        ocuHeading,
+        ocuLabel,
+        ocuHideWhenInCart:       String(ocuHideWhenInCart),
+        ocuProductVariantId:     ocuProduct?.variantId || "",
+        ocuProductTitle:         ocuProduct?.title || "",
+        ocuProductImageUrl:      ocuProduct?.imageUrl || "",
+        ocuProductPrice:         String(ocuProduct?.price || 0),
       },
       { method: "POST" }
     );
@@ -170,9 +271,9 @@ export default function GeneralSettings() {
 
   return (
     <s-page heading="General Settings">
-      <s-button slot="primary-action" onClick={handleSubmit} variant="primary" loading={saving ? true : undefined}>
-        Save Settings
-      </s-button>
+      {isDirty && (
+        <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />
+      )}
 
       {/* ── Side Cart ── */}
       <s-section heading="Side Cart">
@@ -482,6 +583,16 @@ export default function GeneralSettings() {
         </s-stack>
       </s-section>
 
+      {/* ── One-Click Upsell ── */}
+      <OcuSection
+        shopify={shopify}
+        ocuEnabled={ocuEnabled} setOcuEnabled={setOcuEnabled}
+        ocuHeading={ocuHeading} setOcuHeading={setOcuHeading}
+        ocuLabel={ocuLabel} setOcuLabel={setOcuLabel}
+        ocuHideWhenInCart={ocuHideWhenInCart} setOcuHideWhenInCart={setOcuHideWhenInCart}
+        ocuProduct={ocuProduct} setOcuProduct={setOcuProduct}
+      />
+
       {/* ── Custom Code ── */}
       <s-section heading="Custom CSS &amp; JavaScript">
         <s-stack direction="block" gap="base">
@@ -724,6 +835,157 @@ function CartPreview({ settings }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── SaveBar ─────────────────────────────────────────────────
+function SaveBar({ onSave, onDiscard, saving }) {
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#fff",
+      borderBottom: "1px solid #e5e7eb",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "14px 28px",
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 500, color: "#6b7280" }}>Unsaved changes</span>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button
+          onClick={onDiscard}
+          disabled={saving}
+          style={{
+            padding: "8px 18px", borderRadius: 7,
+            border: "1.5px solid #d1d5db",
+            background: "#fff", color: "#374151",
+            fontSize: 13, fontWeight: 600,
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.5 : 1,
+          }}
+        >
+          Discard
+        </button>
+        <button
+          onClick={onSave}
+          disabled={saving}
+          style={{
+            padding: "8px 22px", borderRadius: 7, border: "none",
+            background: saving ? "#374151" : "#111827",
+            color: "#fff", fontSize: 13, fontWeight: 700,
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.75 : 1,
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── One-Click Upsell Section ─────────────────────────────────
+function OcuSection({ shopify, ocuEnabled, setOcuEnabled, ocuHeading, setOcuHeading, ocuLabel, setOcuLabel, ocuHideWhenInCart, setOcuHideWhenInCart, ocuProduct, setOcuProduct }) {
+  async function pickProduct() {
+    const selected = await shopify.resourcePicker({ type: "product", multiple: false });
+    if (!selected || selected.length === 0) return;
+    const p = selected[0];
+    const variant = p.variants?.[0];
+    setOcuProduct({
+      variantId: variant?.id || "",
+      title: p.title || "",
+      imageUrl: p.images?.[0]?.originalSrc || "",
+      price: variant?.price ? Math.round(parseFloat(variant.price) * 100) : 0,
+    });
+  }
+
+  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+
+  return (
+    <s-section heading="One-Click Upsell">
+      <s-stack direction="block" gap="base">
+        <ToggleRow
+          label="Enable One-Click Upsell"
+          desc="Show a checkbox below cart items. When checked, the selected product is added to the cart instantly."
+          checked={ocuEnabled}
+          onChange={setOcuEnabled}
+        />
+        {ocuEnabled && (
+          <>
+            <div>
+              <label style={labelStyle}>Section Heading</label>
+              <input
+                type="text"
+                value={ocuHeading}
+                onChange={e => setOcuHeading(e.target.value)}
+                style={inputStyle}
+                placeholder="Complete your order"
+              />
+              <p style={helpText}>Title shown above the upsell checkbox in the cart.</p>
+            </div>
+
+            <div>
+              <label style={labelStyle}>Checkbox Label</label>
+              <input
+                type="text"
+                value={ocuLabel}
+                onChange={e => setOcuLabel(e.target.value)}
+                style={inputStyle}
+                placeholder="Add to your order"
+              />
+              <p style={helpText}>Shown next to the product image inside the checkbox row.</p>
+            </div>
+
+            <ToggleRow
+              label="Hide when product is already in cart"
+              desc="Once the customer adds the upsell product, the checkbox disappears. Turn off to always show it."
+              checked={ocuHideWhenInCart}
+              onChange={setOcuHideWhenInCart}
+            />
+
+            <div>
+              <label style={labelStyle}>Upsell Product</label>
+              {ocuProduct ? (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+                  border: "1.5px solid #e0e0e0", borderRadius: 10, background: "#fafafa",
+                }}>
+                  {ocuProduct.imageUrl && (
+                    <img src={ocuProduct.imageUrl} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 7, flexShrink: 0 }} />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ocuProduct.title}
+                    </p>
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{fmt(ocuProduct.price)}</p>
+                  </div>
+                  <button onClick={pickProduct} style={{ ...outlineBtn, padding: "7px 14px", fontSize: 12 }}>Change</button>
+                  <button onClick={() => setOcuProduct(null)} style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                </div>
+              ) : (
+                <button onClick={pickProduct} style={{ ...outlineBtn, width: "100%" }}>
+                  + Select Product
+                </button>
+              )}
+            </div>
+
+            <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
+              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
+              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#111" }}>{ocuHeading || "Complete your order"}</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#fff", borderRadius: 8, border: "1.5px solid #e5e7eb" }}>
+                <input type="checkbox" style={{ accentColor: "#008060", width: 18, height: 18, flexShrink: 0 }} readOnly />
+                {ocuProduct?.imageUrl && (
+                  <img src={ocuProduct.imageUrl} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 7, border: "1px solid #f0f0f0" }} />
+                )}
+                <div style={{ flex: 1 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#111" }}>{ocuLabel || "Add to your order"}</p>
+                  {ocuProduct && <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{ocuProduct.title} · {fmt(ocuProduct.price)}</p>}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </s-stack>
+    </s-section>
   );
 }
 

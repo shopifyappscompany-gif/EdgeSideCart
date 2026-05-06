@@ -122,6 +122,69 @@ model CartSettings {
   // Order summary dropdown above checkout button
   orderSummaryEnabled Boolean @default(true)
 
+  // One-click upsell (checkbox below cart items)
+  ocuEnabled           Boolean @default(false)
+  ocuHeading           String  @default("Complete your order")
+  ocuLabel             String  @default("Add to your order")
+  ocuHideWhenInCart    Boolean @default(true)
+  ocuProductVariantId  String  @default("")
+  ocuProductTitle      String  @default("")
+  ocuProductImageUrl   String  @default("")
+  ocuProductPrice      Int     @default(0)
+
+  // Billing plan: "starter" | "growth" | "enterprise"
+  planName    String  @default("starter")
+  freeForever Boolean @default(false)
+
+  // Free Shipping Progress Bar
+  freeShippingBarEnabled   Boolean @default(false)
+  freeShippingThreshold    Float   @default(50)
+  freeShippingText         String  @default("Add {{amount}} more for FREE shipping!")
+  freeShippingUnlockedText String  @default("You've unlocked free shipping!")
+
+  // Trust Badges
+  trustBadgesEnabled Boolean @default(false)
+  trustBadges        String  @default("[]")
+
+  // Sticky Add-to-Cart
+  stickyAtcEnabled Boolean @default(false)
+  stickyAtcText    String  @default("Add to Cart")
+
+  // Express Checkout Buttons
+  expressCheckoutEnabled   Boolean @default(false)
+  expressCheckoutShopPay   Boolean @default(true)
+  expressCheckoutApplePay  Boolean @default(true)
+  expressCheckoutGooglePay Boolean @default(false)
+
+  // Volume Discounts
+  volumeDiscountEnabled Boolean @default(false)
+  volumeDiscountTitle   String  @default("Buy more, save more!")
+  volumeDiscounts       String  @default("[]")
+
+  // Gift Wrap
+  giftWrapEnabled          Boolean @default(false)
+  giftWrapHeading          String  @default("Gift Options")
+  giftWrapLabel            String  @default("Add gift wrap")
+  giftWrapHideWhenInCart   Boolean @default(true)
+  giftWrapProductVariantId String  @default("")
+  giftWrapProductTitle     String  @default("")
+  giftWrapProductImageUrl  String  @default("")
+  giftWrapPrice            Int     @default(0)
+
+  // Stock Scarcity on Line Items
+  stockScarcityEnabled   Boolean @default(false)
+  stockScarcityThreshold Int     @default(5)
+  stockScarcityText      String  @default("Only {{count}} left!")
+
+  // Recently Viewed (empty cart)
+  recentlyViewedEnabled Boolean @default(false)
+  recentlyViewedTitle   String  @default("You might also like")
+  recentlyViewedLimit   Int     @default(4)
+
+  // Cart Share Link
+  cartShareEnabled Boolean @default(false)
+  cartShareText    String  @default("Share your cart")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

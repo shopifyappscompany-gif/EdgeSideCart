@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -89,9 +89,41 @@ export default function UpsellSettings() {
   const [aiIntent, setAiIntent] = useState(s.aiUpsellIntent ?? "related");
   const [aiLimit, setAiLimit] = useState(s.aiUpsellLimit ?? 4);
 
+  function snap() {
+    return JSON.stringify({ enabled, title, triggerType, minCartValue, minQty,
+      upsellProducts, triggerProducts, triggerCollections, aiEnabled, aiTitle, aiIntent, aiLimit });
+  }
+  const savedSnap = useRef(snap());
+  const [isDirty, setIsDirty] = useState(false);
+
   useEffect(() => {
-    if (fetcher.data?.success) shopify.toast.show("Upsell settings saved!");
+    setIsDirty(snap() !== savedSnap.current);
+  }, [enabled, title, triggerType, minCartValue, minQty, upsellProducts, triggerProducts, triggerCollections,
+      aiEnabled, aiTitle, aiIntent, aiLimit]);
+
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      shopify.toast.show("Upsell settings saved!");
+      savedSnap.current = snap();
+      setIsDirty(false);
+    }
   }, [fetcher.data]);
+
+  function handleDiscard() {
+    const s = settings || {};
+    setEnabled(s.upsellEnabled ?? false);
+    setTitle(s.upsellTitle ?? "You might also like");
+    setTriggerType(s.upsellTriggerType ?? "cartValue");
+    setMinCartValue(s.upsellMinCartValue ?? 50);
+    setMinQty(s.upsellMinQuantity ?? 2);
+    setUpsellProducts(safeJSON(s.upsellProducts, []));
+    setTriggerProducts(safeJSON(s.upsellTriggerProductIds, []));
+    setTriggerCollections(safeJSON(s.upsellTriggerCollectionIds, []));
+    setAiEnabled(s.aiUpsellEnabled ?? false);
+    setAiTitle(s.aiUpsellTitle ?? "Customers Also Bought");
+    setAiIntent(s.aiUpsellIntent ?? "related");
+    setAiLimit(s.aiUpsellLimit ?? 4);
+  }
 
   async function pickUpsellProducts() {
     const selected = await shopify.resourcePicker({
@@ -154,9 +186,7 @@ export default function UpsellSettings() {
 
   return (
     <s-page heading="Upsell Settings">
-      <s-button slot="primary-action" onClick={handleSubmit} variant="primary" loading={saving ? true : undefined}>
-        Save Upsell Settings
-      </s-button>
+      {isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}
 
       {/* Enable toggle */}
       <s-section heading="Upsell Feature">
@@ -430,6 +460,32 @@ const removeBtn = {
 
 function safeJSON(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
+}
+
+function SaveBar({ onSave, onDiscard, saving }) {
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#fff", borderBottom: "1px solid #e5e7eb",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "14px 28px",
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 500, color: "#6b7280" }}>Unsaved changes</span>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button onClick={onDiscard} disabled={saving} style={{
+          padding: "8px 18px", borderRadius: 7, border: "1.5px solid #d1d5db",
+          background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600,
+          cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1,
+        }}>Discard</button>
+        <button onClick={onSave} disabled={saving} style={{
+          padding: "8px 22px", borderRadius: 7, border: "none",
+          background: saving ? "#374151" : "#111827", color: "#fff", fontSize: 13, fontWeight: 700,
+          cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.75 : 1,
+        }}>{saving ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
 }
 
 export const headers = (headersArgs) => boundary.headers(headersArgs);

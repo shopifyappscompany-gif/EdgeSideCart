@@ -32,6 +32,8 @@
   var ecHandlingAdd        = false;
   var scarcityTimer        = null;
   var orderSummaryOpen     = false;
+  var inventoryCache       = {};   /* keyed by variant_id — stores inventory_quantity */
+  var cartShareToastTimer  = null;
 
   /* ===========================================================
      BOOT
@@ -74,6 +76,8 @@
           applyDiscount(settings.autoDiscountCode);
         }
         syncFreebie();
+        trackRecentlyViewed();
+        initStickyAtc();
       })
       .catch(function (err) {
         console.warn("[EdgeCart] init error:", err);
@@ -453,19 +457,88 @@
     if (!body) return;
 
     if (!cart || cart.item_count === 0) {
-      body.innerHTML = [
-        '<div class="ec-empty">',
-          svgCart("ec-empty__icon"),
-          '<p class="ec-empty__text">Your cart is empty</p>',
-          '<p class="ec-empty__sub">Add items to get started</p>',
-          '<button class="ec-empty__btn" id="ec-keep-shopping">Continue Shopping</button>',
-        '</div>',
-      ].join("");
-      on(id("ec-keep-shopping"), "click", closeCart);
+      var rvHtml = "";
+      if (settings.recentlyViewedEnabled) {
+        rvHtml = buildRecentlyViewedHTML();
+      }
+      if (rvHtml) {
+        body.innerHTML = rvHtml;
+      } else {
+        body.innerHTML = [
+          '<div class="ec-empty">',
+            svgCart("ec-empty__icon"),
+            '<p class="ec-empty__text">Your cart is empty</p>',
+            '<p class="ec-empty__sub">Add items to get started</p>',
+            '<button class="ec-empty__btn" id="ec-keep-shopping">Continue Shopping</button>',
+          '</div>',
+        ].join("");
+        on(id("ec-keep-shopping"), "click", closeCart);
+      }
       return;
     }
 
-    body.innerHTML = '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>';
+    var ocuBodyHtml = "";
+    if (settings.ocuEnabled && settings.ocuProductVariantId) {
+      var ocuBodyNumId = String(settings.ocuProductVariantId).replace(/[^0-9]/g, "");
+      var ocuBodyInCart = cart.items.some(function (i) { return String(i.variant_id) === ocuBodyNumId; });
+      var hideWhenInCart = settings.ocuHideWhenInCart !== false;
+      if (!(hideWhenInCart && ocuBodyInCart)) {
+        ocuBodyHtml = buildOcuHTML(ocuBodyInCart);
+      }
+    }
+
+    var giftWrapBodyHtml = "";
+    if (settings.giftWrapEnabled && settings.giftWrapProductVariantId) {
+      var gwNumId = String(settings.giftWrapProductVariantId).replace(/[^0-9]/g, "");
+      var gwInCart = cart.items.some(function (i) { return String(i.variant_id) === gwNumId; });
+      var gwHide = settings.giftWrapHideWhenInCart !== false;
+      if (!(gwHide && gwInCart)) {
+        giftWrapBodyHtml = buildGiftWrapHTML(gwInCart);
+      }
+    }
+
+    var freeShipHtml = settings.freeShippingBarEnabled ? buildFreeShippingBarHTML() : "";
+
+    body.innerHTML = freeShipHtml + '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>' + ocuBodyHtml + giftWrapBodyHtml;
+
+    /* Bind OCU checkbox */
+    var ocuBodyCheck = id("ec-ocu-check");
+    if (ocuBodyCheck && settings.ocuEnabled && settings.ocuProductVariantId) {
+      var ocuBodyId = String(settings.ocuProductVariantId).replace(/[^0-9]/g, "");
+      on(ocuBodyCheck, "change", function () {
+        if (ocuBodyCheck.checked) {
+          ocuBodyCheck.disabled = true;
+          cartAdd(ocuBodyId, 1, {}).catch(function () { ocuBodyCheck.checked = false; }).finally(function () { ocuBodyCheck.disabled = false; });
+        } else {
+          var ocuBodyItem = cart.items.find(function (i) { return String(i.variant_id) === ocuBodyId; });
+          if (ocuBodyItem) {
+            ocuBodyCheck.disabled = true;
+            cartChange(ocuBodyItem.key, 0).catch(function () { ocuBodyCheck.checked = true; }).finally(function () { ocuBodyCheck.disabled = false; });
+          }
+        }
+      });
+    }
+
+    /* Bind Gift Wrap checkbox */
+    var gwCheck = id("ec-gw-check");
+    if (gwCheck && settings.giftWrapEnabled && settings.giftWrapProductVariantId) {
+      var gwId = String(settings.giftWrapProductVariantId).replace(/[^0-9]/g, "");
+      on(gwCheck, "change", function () {
+        if (gwCheck.checked) {
+          gwCheck.disabled = true;
+          cartAdd(gwId, 1, { _edge_cart_gift_wrap: "true" }).catch(function () { gwCheck.checked = false; }).finally(function () { gwCheck.disabled = false; });
+        } else {
+          var gwItem = cart.items.find(function (i) { return String(i.variant_id) === gwId; });
+          if (gwItem) {
+            gwCheck.disabled = true;
+            cartChange(gwItem.key, 0).catch(function () { gwCheck.checked = true; }).finally(function () { gwCheck.disabled = false; });
+          }
+        }
+      });
+    }
+
+    /* Fetch inventory for stock scarcity (async) */
+    if (settings.stockScarcityEnabled) fetchInventoryForItems();
   }
 
   function getFreebieOffer(item) {
@@ -508,6 +581,16 @@
           '</div>',
         ].join("");
 
+    var scarcityBadge = "";
+    if (settings.stockScarcityEnabled && !freebie) {
+      var invQty = inventoryCache[item.variant_id];
+      var threshold = settings.stockScarcityThreshold || 5;
+      if (invQty !== undefined && invQty !== null && invQty <= threshold && invQty > 0) {
+        var scarcityTxt = (settings.stockScarcityText || "Only {{count}} left!").replace("{{count}}", String(invQty));
+        scarcityBadge = '<span class="ec-item__scarcity">' + esc(scarcityTxt) + '</span>';
+      }
+    }
+
     return [
       '<div class="ec-item' + (isFreebieLoading ? " ec-item--syncing" : "") + (freebie ? " ec-item--freebie" : "") + '" data-key="' + esc(item.key) + '">',
         '<div class="ec-item__img">',
@@ -524,6 +607,7 @@
               showVar && item.variant_title && item.variant_title !== "Default Title"
                 ? '<p class="ec-item__variant">' + esc(item.variant_title) + '</p>'
                 : "",
+              scarcityBadge,
             '</div>',
             freebie
               ? (isFreebieLoading
@@ -565,6 +649,9 @@
 
     /* Freebie */
     html += buildFreebieHTML();
+
+    /* Volume discounts */
+    if (settings.volumeDiscountEnabled) html += buildVolumeDiscountHTML();
 
     /* Static upsell */
     if (settings.upsellEnabled) html += buildUpsellHTML();
@@ -705,11 +792,20 @@
       ].join("");
     }
 
+    /* Cart share link */
+    if (settings.cartShareEnabled) html += buildCartShareHTML();
+
     html += [
       '<button class="ec-checkout-btn" id="ec-checkout">',
         'Checkout · ' + money(finalTotal),
       '</button>',
     ].join("");
+
+    /* Express checkout */
+    if (settings.expressCheckoutEnabled) html += buildExpressCheckoutHTML();
+
+    /* Trust badges */
+    if (settings.trustBadgesEnabled) html += buildTrustBadgesHTML();
 
     footer.innerHTML = html;
 
@@ -753,6 +849,38 @@
     /* Bind checkout */
     var checkoutBtn = id("ec-checkout");
     if (checkoutBtn) on(checkoutBtn, "click", handleCheckout);
+
+    /* Bind cart share */
+    var shareBtn = id("ec-cart-share-btn");
+    if (shareBtn) {
+      on(shareBtn, "click", function () {
+        var permalink = "https://" + window.location.hostname + "/cart/" +
+          cart.items.map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(permalink).then(function () {
+            shareBtn.textContent = "Link copied!";
+            if (cartShareToastTimer) clearTimeout(cartShareToastTimer);
+            cartShareToastTimer = setTimeout(function () {
+              shareBtn.textContent = "🔗 " + esc(settings.cartShareText || "Share your cart");
+            }, 2500);
+          }).catch(function () {
+            shareBtn.textContent = "Copy failed";
+          });
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = permalink;
+          ta.style.cssText = "position:fixed;top:-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); shareBtn.textContent = "Link copied!"; } catch (_) {}
+          document.body.removeChild(ta);
+          if (cartShareToastTimer) clearTimeout(cartShareToastTimer);
+          cartShareToastTimer = setTimeout(function () {
+            shareBtn.textContent = "🔗 " + esc(settings.cartShareText || "Share your cart");
+          }, 2500);
+        }
+      });
+    }
   }
 
   function handleCheckout() {
@@ -1028,6 +1156,273 @@
       return qty > offer.maxQuantity;
     }
     return false;
+  }
+
+  /* ── Free Shipping Progress Bar HTML ───────────────────── */
+  function buildFreeShippingBarHTML() {
+    if (!settings || !settings.freeShippingBarEnabled || !cart) return "";
+    var threshold = settings.freeShippingThreshold || 50;
+    var cartVal = cart.total_price / 100;
+    var rem = Math.max(0, threshold - cartVal);
+    var pct = Math.min(100, Math.round((cartVal / threshold) * 100));
+    var unlocked = cartVal >= threshold;
+    var msg = unlocked
+      ? esc(settings.freeShippingUnlockedText || "You've unlocked free shipping!")
+      : esc((settings.freeShippingText || "Add {{amount}} more for FREE shipping!").replace("{{amount}}", moneyVal(rem * 100)));
+    return [
+      '<div class="ec-free-ship">',
+        '<p class="ec-free-ship__msg' + (unlocked ? ' ec-free-ship__msg--done' : '') + '">' + msg + '</p>',
+        '<div class="ec-free-ship__track">',
+          '<div class="ec-free-ship__fill" style="width:' + pct + '%"></div>',
+        '</div>',
+      '</div>',
+    ].join("");
+  }
+
+  /* ── Volume Discount Table HTML ─────────────────────────── */
+  function buildVolumeDiscountHTML() {
+    var tiers = settings.volumeDiscounts || [];
+    if (!tiers.length) return "";
+    var itemCount = cart ? cart.item_count : 0;
+    var rows = tiers.map(function (t) {
+      var active = itemCount >= t.qty;
+      return [
+        '<tr class="' + (active ? 'ec-vd__row--active' : '') + '">',
+          '<td class="ec-vd__cell">Buy ' + t.qty + '+</td>',
+          '<td class="ec-vd__cell ec-vd__cell--pct">' + t.pct + '% off' + (active ? ' ✓' : '') + '</td>',
+        '</tr>',
+      ].join("");
+    }).join("");
+    return [
+      '<div class="ec-vd">',
+        '<p class="ec-vd__title">' + esc(settings.volumeDiscountTitle || "Buy more, save more!") + '</p>',
+        '<table class="ec-vd__table"><tbody>' + rows + '</tbody></table>',
+      '</div>',
+    ].join("");
+  }
+
+  /* ── Gift Wrap HTML ─────────────────────────────────────── */
+  function buildGiftWrapHTML(checked) {
+    var price = settings.giftWrapPrice ? ' · ' + money(settings.giftWrapPrice) : '';
+    var heading = settings.giftWrapHeading || 'Gift Options';
+    return [
+      '<div class="ec-gw" id="ec-gw">',
+        '<p class="ec-gw__heading">' + esc(heading) + '</p>',
+        '<label class="ec-gw__label">',
+          '<input class="ec-gw__check" id="ec-gw-check" type="checkbox"' + (checked ? ' checked' : '') + '>',
+          settings.giftWrapProductImageUrl
+            ? '<img class="ec-gw__img" src="' + esc(settings.giftWrapProductImageUrl) + '" alt="" loading="lazy">'
+            : '',
+          '<div class="ec-gw__info">',
+            '<span class="ec-gw__add-label">🎁 ' + esc(settings.giftWrapLabel || 'Add gift wrap') + '</span>',
+            settings.giftWrapProductTitle
+              ? '<span class="ec-gw__name">' + esc(settings.giftWrapProductTitle) + price + '</span>'
+              : '',
+          '</div>',
+        '</label>',
+      '</div>',
+    ].join('');
+  }
+
+  /* ── Express Checkout Buttons HTML ─────────────────────── */
+  function buildExpressCheckoutHTML() {
+    var methods = [];
+    if (settings.expressCheckoutShopPay)   methods.push({ label: "Shop Pay",   cls: "ec-express__shop-pay",   txt: "Shop Pay" });
+    if (settings.expressCheckoutApplePay)  methods.push({ label: "Apple Pay",  cls: "ec-express__apple-pay",  txt: "Apple Pay" });
+    if (settings.expressCheckoutGooglePay) methods.push({ label: "Google Pay", cls: "ec-express__google-pay", txt: "Google Pay" });
+    if (!methods.length) return "";
+    var url = checkoutUrl();
+    var btns = methods.map(function (m) {
+      return '<a class="ec-express__btn ' + m.cls + '" href="' + esc(url) + '">' + m.txt + '</a>';
+    }).join("");
+    return [
+      '<div class="ec-express">',
+        '<div class="ec-express__divider"><span>or pay with</span></div>',
+        '<div class="ec-express__row">' + btns + '</div>',
+      '</div>',
+    ].join("");
+  }
+
+  /* ── Trust Badges HTML ──────────────────────────────────── */
+  function buildTrustBadgesHTML() {
+    var badges = settings.trustBadges || [];
+    var enabled = badges.filter(function (b) { return b.enabled !== false; });
+    if (!enabled.length) return "";
+    var items = enabled.map(function (b) {
+      return [
+        '<div class="ec-trust__badge">',
+          '<span class="ec-trust__icon">' + esc(b.icon || "") + '</span>',
+          '<span class="ec-trust__text">' + esc(b.text || "") + '</span>',
+        '</div>',
+      ].join("");
+    }).join("");
+    return '<div class="ec-trust">' + items + '</div>';
+  }
+
+  /* ── Cart Share Link HTML ───────────────────────────────── */
+  function buildCartShareHTML() {
+    return [
+      '<div class="ec-cart-share">',
+        '<button class="ec-cart-share__btn" id="ec-cart-share-btn">',
+          '🔗 ' + esc(settings.cartShareText || "Share your cart"),
+        '</button>',
+      '</div>',
+    ].join("");
+  }
+
+  /* ── Recently Viewed HTML (empty cart) ─────────────────── */
+  function buildRecentlyViewedHTML() {
+    var rv = [];
+    try { rv = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
+    var limit = Math.min(Math.max(parseInt(settings.recentlyViewedLimit) || 4, 2), 6);
+    var toShow = rv.slice(0, limit);
+    if (!toShow.length) return "";
+    var cards = toShow.map(function (p) {
+      var priceHtml = p.price ? '<p class="ec-rv-card__price">' + moneyVal(p.price) + '</p>' : '';
+      return [
+        '<a class="ec-rv-card" href="' + esc(p.url || ("/products/" + p.handle)) + '">',
+          p.imageUrl
+            ? '<img class="ec-rv-card__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy">'
+            : '<div class="ec-rv-card__img-placeholder"></div>',
+          '<div class="ec-rv-card__body">',
+            '<p class="ec-rv-card__name">' + esc(p.title) + '</p>',
+            priceHtml,
+          '</div>',
+        '</a>',
+      ].join("");
+    }).join("");
+    return [
+      '<div class="ec-rv">',
+        svgCart("ec-empty__icon"),
+        '<p class="ec-empty__text">Your cart is empty</p>',
+        '<p class="ec-rv__title">' + esc(settings.recentlyViewedTitle || "You might also like") + '</p>',
+        '<div class="ec-rv__grid">' + cards + '</div>',
+      '</div>',
+    ].join("");
+  }
+
+  /* ── Track recently viewed products ─────────────────────── */
+  function trackRecentlyViewed() {
+    if (!settings || !settings.recentlyViewedEnabled) return;
+    if (window.location.pathname.indexOf("/products/") === -1) return;
+    var product = window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product;
+    if (!product && window.meta && window.meta.product) product = window.meta.product;
+    if (!product) return;
+    var entry = {
+      handle:   product.handle || "",
+      title:    product.title  || document.title || "",
+      imageUrl: (product.featured_image || ""),
+      price:    product.price || (product.variants && product.variants[0] && product.variants[0].price) || 0,
+      url:      window.location.pathname,
+    };
+    if (!entry.handle) return;
+    var rv = [];
+    try { rv = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
+    rv = rv.filter(function (p) { return p.handle !== entry.handle; });
+    rv.unshift(entry);
+    if (rv.length > 10) rv = rv.slice(0, 10);
+    try { localStorage.setItem("ec_rv", JSON.stringify(rv)); } catch (_) {}
+  }
+
+  /* ── Fetch inventory for stock scarcity ─────────────────── */
+  function fetchInventoryForItems() {
+    if (!cart || !settings || !settings.stockScarcityEnabled) return;
+    var fetched = false;
+    cart.items.forEach(function (item) {
+      if (isFreebieItem(item)) return;
+      if (inventoryCache[item.variant_id] !== undefined) return;
+      if (!item.handle) return;
+      fetched = true;
+      fetch("/products/" + item.handle + ".js", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !data.variants) return;
+          data.variants.forEach(function (v) {
+            inventoryCache[v.id] = v.inventory_management ? v.inventory_quantity : null;
+          });
+          if (isOpen) renderBody();
+        })
+        .catch(function () {});
+    });
+    return fetched;
+  }
+
+  /* ── Sticky Add-to-Cart ──────────────────────────────────── */
+  function initStickyAtc() {
+    if (!settings || !settings.stickyAtcEnabled) return;
+    if (window.location.pathname.indexOf("/products/") === -1) return;
+
+    var stickyBar = document.createElement("div");
+    stickyBar.id = "ec-sticky-atc";
+    stickyBar.className = "ec-sticky-atc";
+    stickyBar.innerHTML = [
+      '<div class="ec-sticky-atc__inner">',
+        '<span class="ec-sticky-atc__title" id="ec-sticky-title"></span>',
+        '<button class="ec-sticky-atc__btn" id="ec-sticky-btn">' + esc(settings.stickyAtcText || "Add to Cart") + '</button>',
+      '</div>',
+    ].join("");
+    document.body.appendChild(stickyBar);
+
+    var productTitle = document.querySelector("h1.product__title, h1.product-single__title, h1[class*='product']");
+    var titleEl = document.getElementById("ec-sticky-title");
+    if (titleEl && productTitle) titleEl.textContent = productTitle.textContent.trim();
+
+    var nativeBtn = document.querySelector('[name="add"], button[type="submit"][data-add-to-cart], .product-form__submit');
+    if (!nativeBtn) return;
+
+    var observer = new IntersectionObserver(function (entries) {
+      var visible = entries[0] && entries[0].isIntersecting;
+      stickyBar.classList.toggle("ec-sticky-atc--visible", !visible);
+    }, { threshold: 0.1 });
+    observer.observe(nativeBtn);
+
+    var stickyBtn = document.getElementById("ec-sticky-btn");
+    if (stickyBtn) {
+      stickyBtn.addEventListener("click", function () {
+        var form = nativeBtn.closest("form[action*='/cart/add']") || document.querySelector("form[action*='/cart/add']");
+        if (form) {
+          var fd = new FormData(form);
+          var vid = fd.get("id");
+          var qty = parseInt(fd.get("quantity") || "1", 10);
+          if (vid) {
+            stickyBtn.disabled = true;
+            stickyBtn.textContent = "Adding…";
+            cartAdd(vid, qty, {})
+              .then(function (item) { handlePostAdd(item, true); })
+              .catch(function () { form.submit(); })
+              .finally(function () {
+                stickyBtn.disabled = false;
+                stickyBtn.textContent = settings.stickyAtcText || "Add to Cart";
+              });
+            return;
+          }
+        }
+        nativeBtn.click();
+      });
+    }
+  }
+
+  /* ── One-Click Upsell HTML ──────────────────────────────── */
+  function buildOcuHTML(checked) {
+    var price = settings.ocuProductPrice ? ' · ' + money(settings.ocuProductPrice) : '';
+    var heading = settings.ocuHeading || 'Complete your order';
+    return [
+      '<div class="ec-ocu" id="ec-ocu">',
+        '<p class="ec-ocu__heading">' + esc(heading) + '</p>',
+        '<label class="ec-ocu__label">',
+          '<input class="ec-ocu__check" id="ec-ocu-check" type="checkbox"' + (checked ? ' checked' : '') + '>',
+          settings.ocuProductImageUrl
+            ? '<img class="ec-ocu__img" src="' + esc(settings.ocuProductImageUrl) + '" alt="" loading="lazy">'
+            : '',
+          '<div class="ec-ocu__info">',
+            '<span class="ec-ocu__add-label">' + esc(settings.ocuLabel || 'Add to your order') + '</span>',
+            settings.ocuProductTitle
+              ? '<span class="ec-ocu__name">' + esc(settings.ocuProductTitle) + price + '</span>'
+              : '',
+          '</div>',
+        '</label>',
+      '</div>',
+    ].join('');
   }
 
   /* ── Upsell HTML — horizontal scroll carousel ──────────── */
