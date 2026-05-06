@@ -31,9 +31,9 @@
   var tierUnlockedState    = {};   /* keyed by tier.id — fires confetti on unlock transition */
   var ecHandlingAdd        = false;
   var scarcityTimer        = null;
-  var orderSummaryOpen     = false;
   var inventoryCache       = {};   /* keyed by variant_id — stores inventory_quantity */
   var cartShareToastTimer  = null;
+  var orderSummaryOpen     = false;
 
   /* ===========================================================
      BOOT
@@ -172,9 +172,10 @@
     });
   }
 
-  /* Step 1 — validate via Shopify Admin GraphQL to surface exact error messages.
-     Step 2 — apply via /discount/CODE so Shopify's session cookie is set.
-     Step 3 — reload /cart.js; Shopify returns all discount numbers, nothing is calculated here. */
+  /* Validate via Admin GraphQL, then apply via /discount/CODE iframe.
+     If the server explicitly rejects the code → show error.
+     If the server itself is unreachable (proxy/network error) → apply anyway
+     so valid codes are never blocked by infra issues. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -188,34 +189,49 @@
     if (isOpen) renderFooter();
 
     try {
-      var res;
+      /* Step 1: validate — check the code exists and is active on Shopify */
+      var validationData = null;
+      var serverReachable = false;
       try {
-        res = await fetch(
+        var res = await fetch(
           PROXY + "/api/validate-discount?code=" + encodeURIComponent(code),
           { credentials: "same-origin" }
         );
-      } catch (_) {
-        throw new Error("Network error — please check your connection");
+        if (res.ok) {
+          validationData = await res.json();
+          serverReachable = true;
+        }
+      } catch (_) { /* network error — server unreachable, fall through */ }
+
+      /* If server responded and said invalid → only block on real code errors,
+         not on auth/infra errors (expired session, missing scope, etc.) */
+      if (serverReachable && validationData && validationData.valid === false) {
+        var reason = validationData.reason || "";
+        var isRealCodeError = (
+          reason.indexOf("not found") >= 0 ||
+          reason.indexOf("has expired") >= 0 ||
+          reason.indexOf("not yet active") >= 0 ||
+          reason.indexOf("not active") >= 0 ||
+          reason.indexOf("usage limit") >= 0
+        );
+        if (isRealCodeError) {
+          discountCode    = "";
+          appliedDiscount = null;
+          discountError   = reason;
+          discountLoading = false;
+          if (isOpen) renderFooter();
+          return;
+        }
+        /* Auth/infra error — fall through and apply anyway */
       }
 
-      var data;
-      try { data = res.ok ? await res.json() : null; } catch (_) { data = null; }
-      if (!data) data = { valid: false, reason: "Could not reach validation server" };
-
-      if (!data.valid) {
-        discountCode    = "";
-        appliedDiscount = null;
-        discountError   = data.reason || "Invalid discount code";
-        discountLoading = false;
-        if (isOpen) renderFooter();
-        return;
-      }
-
-      /* Let Shopify apply and calculate everything */
+      /* Step 2: apply — set Shopify session cookie via hidden iframe */
       await applyDiscountSession(upperCode);
+
+      /* Step 3: reload cart to get updated totals */
       cart               = await loadCart();
       discountCode       = upperCode;
-      appliedDiscount    = data;
+      appliedDiscount    = validationData || { valid: true, code: upperCode };
       discountError      = "";
       discountLoading    = false;
       discountInputValue = "";
@@ -472,8 +488,8 @@
             '<button class="ec-empty__btn" id="ec-keep-shopping">Continue Shopping</button>',
           '</div>',
         ].join("");
-        on(id("ec-keep-shopping"), "click", closeCart);
       }
+      on(id("ec-keep-shopping"), "click", closeCart);
       return;
     }
 
@@ -537,6 +553,20 @@
       });
     }
 
+    /* Qty manual input */
+    qsa(".ec-qty__input", body).forEach(function(inp) {
+      on(inp, "change", function() {
+        var newQty = parseInt(inp.value, 10);
+        if (isNaN(newQty) || newQty < 1) { inp.value = inp.dataset.prevVal || 1; return; }
+        inp.dataset.prevVal = newQty;
+        doCartChange(inp.dataset.key, newQty);
+      });
+      on(inp, "focus", function() { inp.dataset.prevVal = inp.value; });
+      on(inp, "keydown", function(e) {
+        if (e.key === "Enter") { inp.blur(); }
+      });
+    });
+
     /* Fetch inventory for stock scarcity (async) */
     if (settings.stockScarcityEnabled) fetchInventoryForItems();
   }
@@ -575,8 +605,8 @@
       ? '<div class="ec-qty ec-qty--spin"><div class="ec-spin-circle"></div></div>'
       : [
           '<div class="ec-qty">',
-            '<button class="ec-qty__btn" data-action="dec" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity - 1) + '" aria-label="Decrease"' + (item.quantity <= 1 ? " disabled" : "") + '>−</button>',
-            '<span class="ec-qty__val">' + item.quantity + '</span>',
+            '<button class="ec-qty__btn" data-action="' + (item.quantity <= 1 ? "remove" : "dec") + '" data-key="' + esc(item.key) + '" data-qty="0" aria-label="' + (item.quantity <= 1 ? "Remove" : "Decrease") + '">−</button>',
+            '<input class="ec-qty__val ec-qty__input" type="number" min="1" value="' + item.quantity + '" data-key="' + esc(item.key) + '" aria-label="Quantity">',
             '<button class="ec-qty__btn" data-action="inc" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity + 1) + '" aria-label="Increase">+</button>',
           '</div>',
         ].join("");
@@ -666,8 +696,8 @@
         var labelText = savings > 0
           ? "You save " + money(savings) + "!"
           : appliedDiscount.type === "free_shipping" ? "Free shipping applied!"
-          : appliedDiscount.type === "bxgy" ? (appliedDiscount.description || "Buy X Get Y applied!")
-          : "Applied at checkout";
+          : appliedDiscount.type === "bxgy" ? "Buy X Get Y applied!"
+          : "Discount applied at checkout";
         var savingsLabel = '<span class="ec-discount__saving' + (savings > 0 ? '' : ' ec-discount__saving--info') + '">' + esc(labelText) + '</span>';
         html += [
           '<div class="ec-discount">',
@@ -696,7 +726,7 @@
               '</button>',
             '</div>',
             discountLoading
-              ? '<p class="ec-discount__msg" aria-live="polite">Checking discount…</p>'
+              ? '<p class="ec-discount__msg" aria-live="polite">Applying discount…</p>'
               : discountError
                 ? '<p class="ec-discount__error" role="alert" aria-live="assertive">✗ ' + esc(discountError) + '</p>'
                 : '',
@@ -718,75 +748,51 @@
       ].join("");
     }
 
-    /* Order Summary Dropdown */
+    /* Order Summary — BabyOrgano style: saved pill + collapsible detail */
     if (settings.orderSummaryEnabled !== false) {
-      /* "saved so far" = automatic line-item discounts + any code discount */
-      var autoDisc    = cart.original_total_price - cart.total_price - savings;
-      var totalSaved  = (autoDisc > 0 ? autoDisc : 0) + savings;
-      /* Cart subtotal = what customer pays before any code discount */
-      var cartSubtotal = cart.total_price;
+      var autoDisc   = cart.original_total_price - cart.total_price - savings;
+      var totalSaved = (autoDisc > 0 ? autoDisc : 0) + savings;
+      var savingsPct = cart.original_total_price > 0
+        ? Math.round((totalSaved / cart.original_total_price) * 100) : 0;
 
-      var panelRows = [
-        /* MRP total */
-        '<div class="ec-os__row">',
-          '<span class="ec-os__row-label">MRP total</span>',
-          '<span class="ec-os__row-price">' + money(cart.original_total_price) + '</span>',
-        '</div>',
-        /* Discount on MRP (automatic/line-item discounts) */
+      var detailRows = [
         autoDisc > 0 ? [
-          '<div class="ec-os__row">',
-            '<span class="ec-os__row-label">Discount on MRP</span>',
-            '<span class="ec-os__row-green">−' + money(autoDisc) + '</span>',
-          '</div>',
-        ].join("") : "",
-        /* Cart subtotal */
-        '<div class="ec-os__row">',
-          '<span class="ec-os__row-label">Cart Subtotal</span>',
-          '<span class="ec-os__row-price">' + money(cartSubtotal) + '</span>',
-        '</div>',
-        /* Coupon / code discount */
-        savings > 0 ? [
-          '<div class="ec-os__row">',
-            '<span class="ec-os__row-label">Total discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span>',
-            '<span class="ec-os__row-green">−' + money(savings) + '</span>',
-          '</div>',
-        ].join("") : "",
-        /* Shipping */
-        '<div class="ec-os__row">',
-          '<span class="ec-os__row-label">Shipping Charges</span>',
-          '<span class="ec-os__row-green">Calculated at checkout</span>',
-        '</div>',
-        /* Total savings */
-        totalSaved > 0 ? [
-          '<div class="ec-os__row">',
-            '<span class="ec-os__row-label">Total savings</span>',
-            '<span class="ec-os__row-green">' + money(totalSaved) + '</span>',
-          '</div>',
-        ].join("") : "",
-        /* Divider + Estimated Total */
+          '<div class="ec-os__row"><span class="ec-os__row-label">MRP total</span><span class="ec-os__row-price">' + money(cart.original_total_price) + '</span></div>',
+          '<div class="ec-os__row"><span class="ec-os__row-label">Discount on MRP</span><span class="ec-os__row-green">−' + money(autoDisc) + '</span></div>',
+          '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
+        ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
+        savings > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(savings) + '</span></div>' : "",
+        '<div class="ec-os__row"><span class="ec-os__row-label">Shipping</span><span class="ec-os__row-free">FREE</span></div>',
+        totalSaved > 0 ? '<div class="ec-os__row ec-os__row--savings"><span class="ec-os__row-label">Total savings</span><span class="ec-os__row-green ec-os__row-green--bold">' + money(totalSaved) + '</span></div>' : "",
         '<div class="ec-os__divider"></div>',
-        '<div class="ec-os__row ec-os__row--total">',
-          '<span class="ec-os__row-total-label">Estimated Total</span>',
-          '<span class="ec-os__row-total-price">' + money(finalTotal) + '</span>',
-        '</div>',
+        '<div class="ec-os__row ec-os__row--total"><span class="ec-os__row-total-label">Estimated Total</span><span class="ec-os__row-total-price">' + money(finalTotal) + '</span></div>',
       ].join("");
-
-      /* "X saved so far" pill — only show if there are savings */
-      var savedPill = totalSaved > 0
-        ? '<span class="ec-os__saved-pill">' + money(totalSaved) + ' saved so far</span>'
-        : "";
 
       html += [
         '<div class="ec-os" id="ec-os">',
+          /* Green saved pill — only when savings exist */
+          totalSaved > 0 ? '<div class="ec-os__saved-bar">🎉 ' + money(totalSaved) + ' Saved so far!</div>' : "",
+          /* Toggle row — Estimated Total + price + % badge + chevron */
           '<button class="ec-os__toggle" id="ec-os-toggle" type="button" aria-expanded="' + (orderSummaryOpen ? "true" : "false") + '">',
-            '<span class="ec-os__toggle-left">',
-              svgChevron(),
-              '<span class="ec-os__toggle-label">Order Summary</span>',
-              savedPill,
-            '</span>',
+            '<div class="ec-os__toggle-left">',
+              '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+              '<span class="ec-os__toggle-label">Estimated Total</span>',
+            '</div>',
+            '<div class="ec-os__toggle-right">',
+              totalSaved > 0 ? '<span class="ec-os__orig-price">' + money(cart.original_total_price) + '</span>' : "",
+              '<span class="ec-os__total-price">' + money(finalTotal) + '</span>',
+              savingsPct > 0 ? '<span class="ec-os__pct-badge">(' + savingsPct + '% OFF)</span>' : "",
+            '</div>',
           '</button>',
+          /* Expandable detail panel */
           '<div class="ec-os__panel' + (orderSummaryOpen ? " ec-os__panel--open" : "") + '" id="ec-os-panel">',
-            panelRows,
+            '<div class="ec-os__panel-inner">',
+              '<div class="ec-os__panel-header">',
+                '<span class="ec-os__panel-title">Order Summary</span>',
+                totalSaved > 0 ? '<span class="ec-os__panel-saved">' + money(totalSaved) + ' saved so far</span>' : "",
+              '</div>',
+              detailRows,
+            '</div>',
           '</div>',
         '</div>',
       ].join("");
@@ -836,14 +842,10 @@
     if (osToggle && osPanel) {
       on(osToggle, "click", function () {
         orderSummaryOpen = !orderSummaryOpen;
-        osPanel.classList.toggle("ec-os__panel--open", orderSummaryOpen);
         osToggle.setAttribute("aria-expanded", orderSummaryOpen ? "true" : "false");
-        var chevron = osToggle.querySelector(".ec-os__chevron");
-        if (chevron) chevron.style.transform = orderSummaryOpen ? "rotate(180deg)" : "";
+        osPanel.classList.toggle("ec-os__panel--open", orderSummaryOpen);
+        osToggle.classList.toggle("ec-os__toggle--open", orderSummaryOpen);
       });
-      /* Sync chevron if already open on re-render */
-      var chevronInit = osToggle.querySelector(".ec-os__chevron");
-      if (chevronInit && orderSummaryOpen) chevronInit.style.transform = "rotate(180deg)";
     }
 
     /* Bind checkout */
@@ -1279,11 +1281,12 @@
     if (!toShow.length) return "";
     var cards = toShow.map(function (p) {
       var priceHtml = p.price ? '<p class="ec-rv-card__price">' + moneyVal(p.price) + '</p>' : '';
+      var imgHtml = p.imageUrl
+        ? '<div class="ec-rv-card__img-wrap"><img class="ec-rv-card__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy" onerror="this.parentNode.innerHTML=\'<div class=\\\"ec-rv-card__img-placeholder\\\"></div>\'"></div>'
+        : '<div class="ec-rv-card__img-wrap"><div class="ec-rv-card__img-placeholder"></div></div>';
       return [
         '<a class="ec-rv-card" href="' + esc(p.url || ("/products/" + p.handle)) + '">',
-          p.imageUrl
-            ? '<img class="ec-rv-card__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy">'
-            : '<div class="ec-rv-card__img-placeholder"></div>',
+          imgHtml,
           '<div class="ec-rv-card__body">',
             '<p class="ec-rv-card__name">' + esc(p.title) + '</p>',
             priceHtml,
@@ -1292,11 +1295,18 @@
       ].join("");
     }).join("");
     return [
-      '<div class="ec-rv">',
-        svgCart("ec-empty__icon"),
-        '<p class="ec-empty__text">Your cart is empty</p>',
-        '<p class="ec-rv__title">' + esc(settings.recentlyViewedTitle || "You might also like") + '</p>',
-        '<div class="ec-rv__grid">' + cards + '</div>',
+      '<div class="ec-empty-rv">',
+        /* Empty cart message */
+        '<div class="ec-empty-rv__top">',
+          svgCart("ec-empty__icon"),
+          '<p class="ec-empty__text">Your cart is empty</p>',
+          '<p class="ec-empty__sub">Explore products you recently viewed</p>',
+        '</div>',
+        /* Recently viewed grid */
+        '<div class="ec-rv">',
+          '<p class="ec-rv__title">' + esc(settings.recentlyViewedTitle || "Recently Viewed") + '</p>',
+          '<div class="ec-rv__grid">' + cards + '</div>',
+        '</div>',
       '</div>',
     ].join("");
   }
@@ -1305,23 +1315,67 @@
   function trackRecentlyViewed() {
     if (!settings || !settings.recentlyViewedEnabled) return;
     if (window.location.pathname.indexOf("/products/") === -1) return;
-    var product = window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product;
-    if (!product && window.meta && window.meta.product) product = window.meta.product;
-    if (!product) return;
+
+    /* Handle from URL — most reliable */
+    var pathParts = window.location.pathname.split("/products/");
+    var handle = pathParts[1] ? pathParts[1].split("/")[0].split("?")[0] : "";
+    if (!handle) return;
+
+    /* Meta for title/price */
+    var meta = (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product)
+      || (window.meta && window.meta.product) || {};
+
+    /* Try DOM for image first — fastest, no extra request */
+    var imgUrl = "";
+    var imgEl = document.querySelector(
+      ".product__media img, .product-single__photo img, .product-featured-img, " +
+      ".product__photo img, [data-product-featured-image], .product-gallery__image img, " +
+      ".product-image img, .product__image img, .product-media img, " +
+      ".product-single__media img, [class*='product'] img[src*='cdn.shopify']"
+    );
+    if (imgEl && imgEl.src && imgEl.src.indexOf("data:") === -1) {
+      imgUrl = imgEl.src.replace(/(_\d+x[\d]*)(\.[a-z]+)(\?|$)/gi, "$2$3")
+                        .replace(/\?.*$/, "") + "?width=300";
+    }
+
     var entry = {
-      handle:   product.handle || "",
-      title:    product.title  || document.title || "",
-      imageUrl: (product.featured_image || ""),
-      price:    product.price || (product.variants && product.variants[0] && product.variants[0].price) || 0,
+      handle:   handle,
+      title:    meta.title || (document.querySelector("h1") || {}).textContent || handle,
+      imageUrl: imgUrl,
+      price:    meta.price || (meta.variants && meta.variants[0] && meta.variants[0].price) || 0,
       url:      window.location.pathname,
     };
-    if (!entry.handle) return;
+
     var rv = [];
     try { rv = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
-    rv = rv.filter(function (p) { return p.handle !== entry.handle; });
+    rv = rv.filter(function (p) { return p.handle !== handle; });
     rv.unshift(entry);
     if (rv.length > 10) rv = rv.slice(0, 10);
     try { localStorage.setItem("ec_rv", JSON.stringify(rv)); } catch (_) {}
+
+    /* Fetch product JSON in background to fill in missing image/price */
+    if (!imgUrl || !entry.price) {
+      fetch("/products/" + handle + ".js", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data) return;
+          var saved = [];
+          try { saved = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
+          for (var i = 0; i < saved.length; i++) {
+            if (saved[i].handle !== handle) continue;
+            if (!saved[i].imageUrl && data.featured_image) {
+              saved[i].imageUrl = data.featured_image.replace(/\?.*$/, "") + "?width=300";
+            }
+            if (!saved[i].price && data.variants && data.variants[0]) {
+              saved[i].price = data.variants[0].price;
+            }
+            if (data.title) saved[i].title = data.title;
+            break;
+          }
+          try { localStorage.setItem("ec_rv", JSON.stringify(saved)); } catch (_) {}
+        })
+        .catch(function () {});
+    }
   }
 
   /* ── Fetch inventory for stock scarcity ─────────────────── */
@@ -2091,6 +2145,7 @@
   }
 
   function id(elId) { return document.getElementById(elId); }
+  function qsa(sel, ctx) { return Array.prototype.slice.call((ctx || document).querySelectorAll(sel)); }
   function make(tag, cls) { var el = document.createElement(tag); if (cls) el.className = cls; return el; }
   function on(el, evt, fn) { if (el) el.addEventListener(evt, fn); }
 
