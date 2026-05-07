@@ -189,6 +189,18 @@ model CartSettings {
   updatedAt DateTime @updatedAt
 }
 
+model CartEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  event     String   // cart_open | checkout | upsell_add | freebie_add
+  revenue   Int      @default(0)  // cart total in cents at event time
+  variantId String?  // for upsell_add / freebie_add
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, event])
+}
+
 model SupportMessage {
   id        String   @id @default(cuid())
   shop      String

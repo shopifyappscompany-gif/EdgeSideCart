@@ -8,6 +8,21 @@
   var PROXY = window.EdgeCartProxy || "/apps/edge-cart";
   var SHOP  = window.EdgeCartShop  || "";
 
+  /* Fire-and-forget analytics event — never blocks the UI */
+  function track(event, extra) {
+    try {
+      var payload = Object.assign({ event: event }, extra || {});
+      var url = PROXY + "/api/track" + (SHOP ? "?shop=" + encodeURIComponent(SHOP) : "");
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+        keepalive: true,
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
   /* ── State ─────────────────────────────────────────────── */
   var settings          = null;
   var cart              = null;
@@ -888,6 +903,7 @@
   function handleCheckout() {
     var btn = id("ec-checkout");
     if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+    track("checkout", { revenue: cart ? cart.total_price : 0 });
     function go() { window.location.href = checkoutUrl(); }
     if (settings.orderNotesEnabled && orderNote.trim()) {
       cartUpdateNote(orderNote.trim()).then(go).catch(go);
@@ -1096,6 +1112,7 @@
         .then(function () {
           freebieAutoSync[offer.id] = false;
           freebieRetryAt[offer.id]  = 0;
+          track("freebie_add", { variantId: offer.productVariantId, revenue: cart ? cart.total_price : 0 });
           showFreebieToast(offer);
           syncOfferFreebie(offer);
           if (isOpen) render();
@@ -1700,6 +1717,7 @@
     if (!initialized) return;
     render();
     isOpen = true;
+    track("cart_open");
     /* Re-sync freebie state whenever cart opens */
     syncFreebie();
     var drawer  = id("ec-cart");
@@ -2000,7 +2018,10 @@
       upsellBtn.textContent = "✓ Added";
       upsellBtn.classList.add("ec-upsell-card__add--done");
       cartAdd(vid, 1, {})
-        .then(function () { render(); syncFreebie(); })
+        .then(function () {
+          track("upsell_add", { variantId: vid, revenue: cart ? cart.total_price : 0 });
+          render(); syncFreebie();
+        })
         .catch(function () {
           upsellBtn.disabled = false;
           upsellBtn.textContent = "+ Add";
