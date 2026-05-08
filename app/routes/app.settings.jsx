@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -37,8 +37,22 @@ export const action = async ({ request }) => {
     tieredRewards:           String(form.get("tieredRewards") || "[]"),
     scrollableItems:         form.get("scrollableItems") === "true",
     showLineItemProperties:  form.get("showLineItemProperties") === "true",
+    blockCartPage:           form.get("blockCartPage") === "true",
     customCss:               String(form.get("customCss") || ""),
     customJs:                String(form.get("customJs")  || ""),
+    customCartIconSelector:  String(form.get("customCartIconSelector") || ""),
+    clickableLineItems:      form.get("clickableLineItems") === "true",
+    addToCartBehavior:       String(form.get("addToCartBehavior") || "drawer"),
+    addToCartToastSeconds:   parseInt(form.get("addToCartToastSeconds") || "3", 10),
+    orderSummaryEnabled:     form.get("orderSummaryEnabled") === "true",
+    ocuEnabled:              form.get("ocuEnabled") === "true",
+    ocuHeading:              String(form.get("ocuHeading") || "Complete your order"),
+    ocuLabel:                String(form.get("ocuLabel") || "Add to your order"),
+    ocuHideWhenInCart:       form.get("ocuHideWhenInCart") === "true",
+    ocuProductVariantId:     String(form.get("ocuProductVariantId") || ""),
+    ocuProductTitle:         String(form.get("ocuProductTitle") || ""),
+    ocuProductImageUrl:      String(form.get("ocuProductImageUrl") || ""),
+    ocuProductPrice:         parseInt(form.get("ocuProductPrice") || "0", 10),
   };
 
   await prisma.cartSettings.upsert({
@@ -53,8 +67,11 @@ export const action = async ({ request }) => {
 export default function GeneralSettings() {
   const { settings } = useLoaderData();
   const fetcher = useFetcher();
+  const analyticsF = useFetcher({ key: "analytics-tab" });
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
+  const [activeTab, setActiveTab] = useState("settings");
+  const [analyticsDays, setAnalyticsDays] = useState(30);
   const s = settings || {};
 
   // ── State ────────────────────────────────────────────────
@@ -78,15 +95,112 @@ export default function GeneralSettings() {
   const [tieredRewardsEnabled,    setTieredRewardsEnabled]    = useState(s.tieredRewardsEnabled ?? false);
   const [scrollableItems,         setScrollableItems]         = useState(s.scrollableItems ?? true);
   const [showLineItemProperties,  setShowLineItemProperties]  = useState(s.showLineItemProperties ?? false);
+  const [blockCartPage,           setBlockCartPage]           = useState(s.blockCartPage ?? false);
   const [customCss,               setCustomCss]               = useState(s.customCss ?? "");
   const [customJs,                setCustomJs]                = useState(s.customJs  ?? "");
+  const [customCartIconSelector,  setCustomCartIconSelector]  = useState(s.customCartIconSelector ?? "");
+  const [clickableLineItems,      setClickableLineItems]      = useState(s.clickableLineItems ?? true);
+  const [addToCartBehavior,       setAddToCartBehavior]       = useState(s.addToCartBehavior ?? "drawer");
+  const [addToCartToastSeconds,   setAddToCartToastSeconds]   = useState(s.addToCartToastSeconds ?? 3);
+  const [orderSummaryEnabled,     setOrderSummaryEnabled]     = useState(s.orderSummaryEnabled ?? true);
   const [tieredRewards,           setTieredRewards]           = useState(() => {
     try { return JSON.parse(s.tieredRewards || "[]"); } catch { return []; }
   });
+  const [ocuEnabled,         setOcuEnabled]         = useState(s.ocuEnabled ?? false);
+  const [ocuHeading,         setOcuHeading]         = useState(s.ocuHeading ?? "Complete your order");
+  const [ocuLabel,           setOcuLabel]           = useState(s.ocuLabel ?? "Add to your order");
+  const [ocuHideWhenInCart,  setOcuHideWhenInCart]  = useState(s.ocuHideWhenInCart ?? true);
+  const [ocuProduct,         setOcuProduct]         = useState(
+    s.ocuProductVariantId ? {
+      variantId: s.ocuProductVariantId,
+      title: s.ocuProductTitle || "",
+      imageUrl: s.ocuProductImageUrl || "",
+      price: s.ocuProductPrice || 0,
+    } : null
+  );
+
+  // ── Dirty tracking (Strict Mode safe) ──────────────────
+  function snap() {
+    return JSON.stringify({
+      enabled, headerText, primaryColor,
+      bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
+      discountEnabled, autoDiscountEnabled, autoDiscountCode,
+      orderNotesEnabled, showVariantTitle,
+      scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
+      tieredRewardsEnabled, tieredRewards,
+      scrollableItems, showLineItemProperties, blockCartPage,
+      customCss, customJs, customCartIconSelector,
+      clickableLineItems, addToCartBehavior, addToCartToastSeconds,
+      orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct,
+    });
+  }
+  const savedSnap = useRef(snap());
+  const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    if (fetcher.data?.success) shopify.toast.show("Settings saved!");
+    setIsDirty(snap() !== savedSnap.current);
+  }, [enabled, headerText, primaryColor, bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
+      discountEnabled, autoDiscountEnabled, autoDiscountCode, orderNotesEnabled, showVariantTitle,
+      scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
+      tieredRewardsEnabled, tieredRewards, scrollableItems, showLineItemProperties, blockCartPage,
+      customCss, customJs, customCartIconSelector, clickableLineItems, addToCartBehavior,
+      addToCartToastSeconds, orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct]);
+
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      shopify.toast.show("Settings saved!");
+      savedSnap.current = snap();
+      setIsDirty(false);
+    }
   }, [fetcher.data]);
+
+  useEffect(() => {
+    if (activeTab === "analytics") {
+      analyticsF.load("/app/analytics?days=" + analyticsDays);
+    }
+  }, [activeTab, analyticsDays]);
+
+  function handleDiscard() {
+    setEnabled(s.enabled ?? true);
+    setHeaderText(s.headerText ?? "Your Cart");
+    setPrimaryColor(s.primaryColor ?? "#000000");
+    setBannerEnabled(s.bannerEnabled ?? true);
+    setBannerText(s.bannerText ?? "🎉 Free shipping on orders over $50!");
+    setBannerBgColor(s.bannerBgColor ?? "#1a1a1a");
+    setBannerTextColor(s.bannerTextColor ?? "#ffffff");
+    setDiscountEnabled(s.discountEnabled ?? true);
+    setAutoDiscountEnabled(s.autoDiscountEnabled ?? false);
+    setAutoDiscountCode(s.autoDiscountCode ?? "");
+    setOrderNotesEnabled(s.orderNotesEnabled ?? false);
+    setShowVariantTitle(s.showVariantTitle ?? true);
+    setScarcityEnabled(s.scarcityEnabled ?? false);
+    setScarcityText(s.scarcityText ?? "⏰ Offer ends in:");
+    setScarcityMinutes(s.scarcityMinutes ?? 15);
+    setScarcityBgColor(s.scarcityBgColor ?? "#e53e3e");
+    setScarcityTextColor(s.scarcityTextColor ?? "#ffffff");
+    setTieredRewardsEnabled(s.tieredRewardsEnabled ?? false);
+    setTieredRewards(() => { try { return JSON.parse(s.tieredRewards || "[]"); } catch { return []; } });
+    setScrollableItems(s.scrollableItems ?? true);
+    setShowLineItemProperties(s.showLineItemProperties ?? false);
+    setBlockCartPage(s.blockCartPage ?? false);
+    setCustomCss(s.customCss ?? "");
+    setCustomJs(s.customJs ?? "");
+    setCustomCartIconSelector(s.customCartIconSelector ?? "");
+    setClickableLineItems(s.clickableLineItems ?? true);
+    setAddToCartBehavior(s.addToCartBehavior ?? "drawer");
+    setAddToCartToastSeconds(s.addToCartToastSeconds ?? 3);
+    setOrderSummaryEnabled(s.orderSummaryEnabled ?? true);
+    setOcuEnabled(s.ocuEnabled ?? false);
+    setOcuHeading(s.ocuHeading ?? "Complete your order");
+    setOcuLabel(s.ocuLabel ?? "Add to your order");
+    setOcuHideWhenInCart(s.ocuHideWhenInCart ?? true);
+    setOcuProduct(s.ocuProductVariantId ? {
+      variantId: s.ocuProductVariantId,
+      title: s.ocuProductTitle || "",
+      imageUrl: s.ocuProductImageUrl || "",
+      price: s.ocuProductPrice || 0,
+    } : null);
+  }
 
   function handleSubmit(e) {
     e?.preventDefault();
@@ -113,8 +227,22 @@ export default function GeneralSettings() {
         tieredRewards:          JSON.stringify(tieredRewards),
         scrollableItems:        String(scrollableItems),
         showLineItemProperties: String(showLineItemProperties),
+        blockCartPage:          String(blockCartPage),
         customCss,
         customJs,
+        customCartIconSelector,
+        clickableLineItems:      String(clickableLineItems),
+        addToCartBehavior,
+        addToCartToastSeconds:   String(addToCartToastSeconds),
+        orderSummaryEnabled:     String(orderSummaryEnabled),
+        ocuEnabled:              String(ocuEnabled),
+        ocuHeading,
+        ocuLabel,
+        ocuHideWhenInCart:       String(ocuHideWhenInCart),
+        ocuProductVariantId:     ocuProduct?.variantId || "",
+        ocuProductTitle:         ocuProduct?.title || "",
+        ocuProductImageUrl:      ocuProduct?.imageUrl || "",
+        ocuProductPrice:         String(ocuProduct?.price || 0),
       },
       { method: "POST" }
     );
@@ -128,6 +256,7 @@ export default function GeneralSettings() {
       threshold: 50,
       label: "Spend {{amount}} more to unlock a reward",
       unlockedLabel: "🎉 Reward unlocked!",
+      confettiEnabled: true,
     }]);
   }
 
@@ -150,12 +279,33 @@ export default function GeneralSettings() {
   };
 
   return (
-    <s-page heading="General Settings">
-      <s-button slot="primary-action" onClick={handleSubmit} variant="primary" loading={saving ? true : undefined}>
-        Save Settings
-      </s-button>
+    <s-page heading="Cart Drawer">
+      {/* ── Tabs ── */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "2px solid #e5e7eb" }}>
+        {[{ id: "settings", label: "Settings" }, { id: "analytics", label: "Analytics" }].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: "12px 24px", border: "none", background: "none",
+              fontSize: 14, fontWeight: 600,
+              color: activeTab === tab.id ? "#111" : "#6b7280",
+              borderBottom: activeTab === tab.id ? "2px solid #111" : "2px solid transparent",
+              marginBottom: -2, cursor: "pointer", transition: "all 0.15s",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      {/* ── Side Cart ── */}
+      {activeTab === "settings" && (
+        <>
+          {isDirty && (
+            <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />
+          )}
+
+          {/* ── Side Cart ── */}
       <s-section heading="Side Cart">
         <s-stack direction="block" gap="base">
           <ToggleRow
@@ -187,10 +337,22 @@ export default function GeneralSettings() {
             onChange={setShowLineItemProperties}
           />
           <ToggleRow
+            label="Clickable Product Titles"
+            desc="Make product names in the cart clickable links that open the product page."
+            checked={clickableLineItems}
+            onChange={setClickableLineItems}
+          />
+          <ToggleRow
             label="Scrollable Line Items"
             desc="Keep items in a fixed-height scrollable area so the checkout button is always visible, even with many products."
             checked={scrollableItems}
             onChange={setScrollableItems}
+          />
+          <ToggleRow
+            label="Block /cart Page"
+            desc="Redirect customers away from the /cart page and open your side cart instead. Customers who land on /cart are sent back to the previous page with the side cart open."
+            checked={blockCartPage}
+            onChange={setBlockCartPage}
           />
         </s-stack>
       </s-section>
@@ -316,11 +478,26 @@ export default function GeneralSettings() {
                       onChange={e => updateTier(tier.id, "label", e.target.value)}
                       style={inputStyle} placeholder="Spend {{amount}} more to unlock free shipping" />
                   </div>
-                  <div>
+                  <div style={{ marginBottom: 10 }}>
                     <label style={labelStyle}>Unlocked Message</label>
                     <input type="text" value={tier.unlockedLabel}
                       onChange={e => updateTier(tier.id, "unlockedLabel", e.target.value)}
                       style={inputStyle} placeholder="🚚 Free shipping unlocked!" />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "10px 12px", background: "#f0faf5", borderRadius: 8, border: "1px solid #d4f0e5" }}>
+                    <div>
+                      <strong style={{ fontSize: 13 }}>Confetti on Unlock</strong>
+                      <p style={{ margin: "2px 0 0", fontSize: 12, color: "#555" }}>Show confetti burst when this tier is reached.</p>
+                    </div>
+                    <label style={toggleWrap}>
+                      <input type="checkbox" checked={tier.confettiEnabled !== false}
+                        onChange={e => updateTier(tier.id, "confettiEnabled", e.target.checked)}
+                        style={{ display: "none" }} />
+                      <span style={{ ...toggleTrack, background: tier.confettiEnabled !== false ? "#008060" : "#ccc" }}>
+                        <span style={{ ...toggleThumb, transform: tier.confettiEnabled !== false ? "translateX(20px)" : "translateX(2px)" }} />
+                      </span>
+                    </label>
                   </div>
                 </div>
               ))}
@@ -384,6 +561,68 @@ export default function GeneralSettings() {
         </s-stack>
       </s-section>
 
+      {/* ── Order Summary ── */}
+      <s-section heading="Order Summary">
+        <s-stack direction="block" gap="base">
+          <ToggleRow
+            label="Show Order Summary"
+            desc="Display a collapsible price breakdown (MRP, discounts, total) just above the checkout button."
+            checked={orderSummaryEnabled}
+            onChange={setOrderSummaryEnabled}
+          />
+        </s-stack>
+      </s-section>
+
+      {/* ── Add-to-Cart Behavior ── */}
+      <s-section heading="Add-to-Cart Behavior">
+        <s-stack direction="block" gap="base">
+          <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
+            Choose what happens when a customer clicks an Add-to-Cart button on your storefront.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[
+              { value: "drawer", label: "Open Side Cart", desc: "Slide open EdgeCart immediately after adding a product (default)." },
+              { value: "toast", label: "Show Toast Notification", desc: "Display a small popup confirming the product was added without opening the cart." },
+            ].map(opt => (
+              <label key={opt.value} style={{
+                display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px",
+                border: "1.5px solid " + (addToCartBehavior === opt.value ? "#008060" : "#e0e0e0"),
+                borderRadius: 10, background: addToCartBehavior === opt.value ? "#f0faf5" : "#fff",
+                cursor: "pointer", transition: "border-color 0.15s",
+              }}>
+                <input type="radio" name="addToCartBehavior" value={opt.value}
+                  checked={addToCartBehavior === opt.value}
+                  onChange={() => setAddToCartBehavior(opt.value)}
+                  style={{ marginTop: 2, accentColor: "#008060" }} />
+                <div>
+                  <strong style={{ fontSize: 13, display: "block", marginBottom: 2 }}>{opt.label}</strong>
+                  <span style={{ fontSize: 12, color: "#6b7280" }}>{opt.desc}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+          {addToCartBehavior === "toast" && (
+            <div>
+              <label style={labelStyle}>Toast Duration (seconds)</label>
+              <input type="number" value={addToCartToastSeconds}
+                onChange={e => setAddToCartToastSeconds(Math.min(10, Math.max(1, parseInt(e.target.value) || 3)))}
+                style={{ ...inputStyle, width: 100 }} min="1" max="10" />
+              <p style={helpText}>How long the "Added to cart" popup stays visible (1–10 seconds).</p>
+            </div>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* ── One-Click Upsell ── */}
+      <OcuSection
+        shopify={shopify}
+        ocuEnabled={ocuEnabled} setOcuEnabled={setOcuEnabled}
+        ocuHeading={ocuHeading} setOcuHeading={setOcuHeading}
+        ocuLabel={ocuLabel} setOcuLabel={setOcuLabel}
+        ocuHideWhenInCart={ocuHideWhenInCart} setOcuHideWhenInCart={setOcuHideWhenInCart}
+        ocuProduct={ocuProduct} setOcuProduct={setOcuProduct}
+      />
+
       {/* ── Custom Code ── */}
       <s-section heading="Custom CSS &amp; JavaScript">
         <s-stack direction="block" gap="base">
@@ -392,6 +631,30 @@ export default function GeneralSettings() {
             colours, fonts, layout, or add any DOM manipulation — exactly like other
             side-cart apps. Changes apply to every customer on your store.
           </p>
+
+          {/* Cart Icon Selector */}
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4, color: "#374151" }}>
+              Custom Cart Icon Selector
+            </label>
+            <p style={{ fontSize: 12, color: "#9ca3af", margin: "0 0 8px" }}>
+              EdgeCart automatically detects Horizon, Tinker, Savor, Dawn, and other popular themes.
+              If your theme uses a different cart icon, paste its CSS selector here
+              (right-click the cart icon → Inspect → copy the unique class or ID).
+              Example: <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 3 }}>.my-theme__cart-btn</code>
+            </p>
+            <input
+              type="text"
+              value={customCartIconSelector}
+              onChange={e => setCustomCartIconSelector(e.target.value)}
+              placeholder="Leave blank to use automatic theme detection"
+              style={{
+                width: "100%", padding: "9px 12px", border: "1px solid #d1d5db",
+                borderRadius: 6, fontSize: 13, fontFamily: "monospace",
+                boxSizing: "border-box", outline: "none", color: "#111827",
+              }}
+            />
+          </div>
 
           {/* Custom CSS */}
           <div>
@@ -445,11 +708,183 @@ export default function GeneralSettings() {
         </s-stack>
       </s-section>
 
-      {/* ── Preview ── */}
-      <s-section slot="aside" heading="Live Cart Preview">
-        <CartPreview settings={preview} />
-      </s-section>
+          {/* ── Preview ── */}
+          <s-section slot="aside" heading="Live Cart Preview">
+            <CartPreview settings={preview} />
+          </s-section>
+        </>
+      )}
+
+      {activeTab === "analytics" && (
+        <AnalyticsTab
+          data={analyticsF.data}
+          loading={analyticsF.state !== "idle"}
+          days={analyticsDays}
+          setDays={setAnalyticsDays}
+        />
+      )}
     </s-page>
+  );
+}
+
+// ── Analytics Tab ──────────────────────────────────────────
+function money(cents) {
+  return "$" + (cents / 100).toFixed(2);
+}
+
+function MetricCard({ label, value, sub, color }) {
+  return (
+    <div style={{
+      background: "#fff", border: "1.5px solid #f0f0f0", borderRadius: 14,
+      padding: "20px 22px", display: "flex", flexDirection: "column", gap: 4,
+    }}>
+      <span style={{ fontSize: 12, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.6px" }}>{label}</span>
+      <span style={{ fontSize: 28, fontWeight: 800, color: color || "#111", letterSpacing: "-0.5px" }}>{value}</span>
+      {sub && <span style={{ fontSize: 12, color: "#6b7280" }}>{sub}</span>}
+    </div>
+  );
+}
+
+function BarChart({ data, days }) {
+  const max = Math.max(...data.map((d) => d.rev), 1);
+  const showEvery = days <= 7 ? 1 : days <= 14 ? 2 : 7;
+  return (
+    <div style={{ padding: "0 0 8px" }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 120 }}>
+        {data.map((d) => {
+          const pct = Math.max((d.rev / max) * 100, d.rev > 0 ? 4 : 0);
+          return (
+            <div key={d.date} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "flex-end" }}>
+              <div title={d.date + ": " + money(d.rev)} style={{
+                width: "100%", height: pct + "%",
+                background: d.rev > 0 ? "linear-gradient(180deg, #6366f1, #818cf8)" : "#f3f4f6",
+                borderRadius: "4px 4px 2px 2px", minHeight: 3, transition: "height 0.3s ease",
+              }} />
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+        {data.map((d, i) => {
+          const show = i % showEvery === 0 || i === data.length - 1;
+          return (
+            <div key={d.date} style={{ flex: 1, fontSize: 9, color: "#9ca3af", textAlign: "center", overflow: "hidden" }}>
+              {show ? d.date.slice(5) : ""}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsTab({ data, loading, days, setDays }) {
+  const periods = [
+    { label: "7 days", value: 7 },
+    { label: "30 days", value: 30 },
+    { label: "90 days", value: 90 },
+  ];
+
+  if (loading || !data) {
+    return (
+      <s-section>
+        <div style={{ textAlign: "center", padding: "48px 20px", color: "#9ca3af" }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
+          <p style={{ fontSize: 14, margin: 0 }}>Loading analytics…</p>
+        </div>
+      </s-section>
+    );
+  }
+
+  return (
+    <>
+      {/* Period selector */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {periods.map((p) => (
+          <button
+            key={p.value}
+            onClick={() => setDays(p.value)}
+            style={{
+              padding: "6px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600,
+              border: "none", cursor: "pointer",
+              background: days === p.value ? "#111" : "#f3f4f6",
+              color: days === p.value ? "#fff" : "#374151",
+              transition: "all 0.15s",
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {!data.hasData ? (
+        <s-section>
+          <div style={{ textAlign: "center", padding: "48px 20px", color: "#9ca3af" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
+            <p style={{ fontSize: 16, fontWeight: 600, color: "#374151", margin: "0 0 8px" }}>No data yet</p>
+            <p style={{ fontSize: 14, margin: 0 }}>Analytics will appear here once customers start using your cart.</p>
+          </div>
+        </s-section>
+      ) : (
+        <>
+          <s-section title="Revenue">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
+              <MetricCard label="Total Revenue" value={money(data.totalRevenue)} sub={`${data.checkouts} orders`} color="#111" />
+              <MetricCard label="Avg Order Value" value={money(data.aov)} sub="per checkout" color="#6366f1" />
+              <MetricCard label="Upsell Revenue" value={money(data.upsellRevenue)} sub={`${data.upsellAdds} upsells added`} color="#059669" />
+              <MetricCard label="Conversion Rate" value={data.conversionRate + "%"} sub={`${data.checkouts} of ${data.cartOpens} opens`} color="#d97706" />
+            </div>
+            <div style={{ background: "#fff", border: "1.5px solid #f0f0f0", borderRadius: 14, padding: "20px 22px" }}>
+              <p style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 700, color: "#374151" }}>
+                Revenue — last {data.days} days
+              </p>
+              <BarChart data={data.dailyRevenue} days={data.days} />
+            </div>
+          </s-section>
+
+          <s-section title="Engagement">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+              <MetricCard label="Cart Opens" value={data.cartOpens.toLocaleString()} sub={`last ${data.days} days`} />
+              <MetricCard label="Checkouts" value={data.checkouts.toLocaleString()} sub="reached checkout" color="#6366f1" />
+              <MetricCard label="Upsells Added" value={data.upsellAdds.toLocaleString()} sub="by customers" color="#059669" />
+              <MetricCard label="Freebies Claimed" value={data.freebieAdds.toLocaleString()} sub="free gifts added" color="#ec4899" />
+            </div>
+          </s-section>
+
+          {data.topUpsells.length > 0 && (
+            <s-section title="Top Upsell Products">
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {data.topUpsells.map((u, i) => (
+                  <div key={u.vid} style={{
+                    display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+                    background: "#fff", border: "1.5px solid #f0f0f0", borderRadius: 10,
+                  }}>
+                    <span style={{
+                      width: 24, height: 24, borderRadius: "50%",
+                      background: i === 0 ? "#fbbf24" : i === 1 ? "#9ca3af" : "#cd7c54",
+                      color: "#fff", fontSize: 11, fontWeight: 800,
+                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}>{i + 1}</span>
+                    <span style={{ flex: 1, fontSize: 12, color: "#374151", fontFamily: "monospace" }}>
+                      Variant {u.vid.replace("gid://shopify/ProductVariant/", "")}
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>
+                      {u.count} add{u.count !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </s-section>
+          )}
+        </>
+      )}
+
+      <s-section>
+        <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>
+          📌 Tracks cart opens, checkouts (with cart value), upsell adds, and freebie claims. Revenue shown is the cart value at checkout time.
+        </p>
+      </s-section>
+    </>
   );
 }
 
@@ -524,8 +959,8 @@ function CartPreview({ settings }) {
                   <p style={{ margin: "0 0 5px", fontSize: 11, fontWeight: 600, color: unlocked ? "#166534" : "#92400e" }}>
                     {unlocked ? tier.unlockedLabel : (tier.label || "").replace("{{amount}}", fmt(Math.max(0, tier.threshold * 100 - cartTotal)))}
                   </p>
-                  <div style={{ height: 5, background: "#fde68a", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: pct + "%", background: unlocked ? "#22c55e" : "linear-gradient(90deg,#f59e0b,#d97706)", borderRadius: 3, transition: "width 0.4s" }} />
+                  <div style={{ height: 6, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#f472b6,#dc2626)", borderRadius: 4, transition: "width 0.5s" }} />
                   </div>
                 </div>
               );
@@ -602,6 +1037,157 @@ function CartPreview({ settings }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── SaveBar ─────────────────────────────────────────────────
+function SaveBar({ onSave, onDiscard, saving }) {
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#fff",
+      borderBottom: "1px solid #e5e7eb",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "14px 28px",
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 500, color: "#6b7280" }}>Unsaved changes</span>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button
+          onClick={onDiscard}
+          disabled={saving}
+          style={{
+            padding: "8px 18px", borderRadius: 7,
+            border: "1.5px solid #d1d5db",
+            background: "#fff", color: "#374151",
+            fontSize: 13, fontWeight: 600,
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.5 : 1,
+          }}
+        >
+          Discard
+        </button>
+        <button
+          onClick={onSave}
+          disabled={saving}
+          style={{
+            padding: "8px 22px", borderRadius: 7, border: "none",
+            background: saving ? "#374151" : "#111827",
+            color: "#fff", fontSize: 13, fontWeight: 700,
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.75 : 1,
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── One-Click Upsell Section ─────────────────────────────────
+function OcuSection({ shopify, ocuEnabled, setOcuEnabled, ocuHeading, setOcuHeading, ocuLabel, setOcuLabel, ocuHideWhenInCart, setOcuHideWhenInCart, ocuProduct, setOcuProduct }) {
+  async function pickProduct() {
+    const selected = await shopify.resourcePicker({ type: "product", multiple: false });
+    if (!selected || selected.length === 0) return;
+    const p = selected[0];
+    const variant = p.variants?.[0];
+    setOcuProduct({
+      variantId: variant?.id || "",
+      title: p.title || "",
+      imageUrl: p.images?.[0]?.originalSrc || "",
+      price: variant?.price ? Math.round(parseFloat(variant.price) * 100) : 0,
+    });
+  }
+
+  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+
+  return (
+    <s-section heading="One-Click Upsell">
+      <s-stack direction="block" gap="base">
+        <ToggleRow
+          label="Enable One-Click Upsell"
+          desc="Show a checkbox below cart items. When checked, the selected product is added to the cart instantly."
+          checked={ocuEnabled}
+          onChange={setOcuEnabled}
+        />
+        {ocuEnabled && (
+          <>
+            <div>
+              <label style={labelStyle}>Section Heading</label>
+              <input
+                type="text"
+                value={ocuHeading}
+                onChange={e => setOcuHeading(e.target.value)}
+                style={inputStyle}
+                placeholder="Complete your order"
+              />
+              <p style={helpText}>Title shown above the upsell checkbox in the cart.</p>
+            </div>
+
+            <div>
+              <label style={labelStyle}>Checkbox Label</label>
+              <input
+                type="text"
+                value={ocuLabel}
+                onChange={e => setOcuLabel(e.target.value)}
+                style={inputStyle}
+                placeholder="Add to your order"
+              />
+              <p style={helpText}>Shown next to the product image inside the checkbox row.</p>
+            </div>
+
+            <ToggleRow
+              label="Hide when product is already in cart"
+              desc="Once the customer adds the upsell product, the checkbox disappears. Turn off to always show it."
+              checked={ocuHideWhenInCart}
+              onChange={setOcuHideWhenInCart}
+            />
+
+            <div>
+              <label style={labelStyle}>Upsell Product</label>
+              {ocuProduct ? (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+                  border: "1.5px solid #e0e0e0", borderRadius: 10, background: "#fafafa",
+                }}>
+                  {ocuProduct.imageUrl && (
+                    <img src={ocuProduct.imageUrl} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 7, flexShrink: 0 }} />
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ocuProduct.title}
+                    </p>
+                    <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{fmt(ocuProduct.price)}</p>
+                  </div>
+                  <button onClick={pickProduct} style={{ ...outlineBtn, padding: "7px 14px", fontSize: 12 }}>Change</button>
+                  <button onClick={() => setOcuProduct(null)} style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                </div>
+              ) : (
+                <button onClick={pickProduct} style={{ ...outlineBtn, width: "100%" }}>
+                  + Select Product
+                </button>
+              )}
+            </div>
+
+            <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
+              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
+              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 700, color: "#111" }}>{ocuHeading || "Complete your order"}</p>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#fff", borderRadius: 8, border: "1.5px solid #e5e7eb" }}>
+                <input type="checkbox" style={{ accentColor: "#008060", width: 18, height: 18, flexShrink: 0 }} readOnly />
+                {ocuProduct?.imageUrl && (
+                  <img src={ocuProduct.imageUrl} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 7, border: "1px solid #f0f0f0" }} />
+                )}
+                <div style={{ flex: 1 }}>
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#111" }}>{ocuLabel || "Add to your order"}</p>
+                  {ocuProduct && <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{ocuProduct.title} · {fmt(ocuProduct.price)}</p>}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </s-stack>
+    </s-section>
   );
 }
 

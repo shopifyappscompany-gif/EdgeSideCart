@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFetcher, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -12,18 +12,48 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const form = await request.formData();
+
+  const upsellTriggerType = String(form.get("upsellTriggerType") || "cartValue");
+  const upsellTriggerCollectionIdsRaw = String(form.get("upsellTriggerCollectionIds") || "[]");
+  const triggerCollections = safeJSON(upsellTriggerCollectionIdsRaw, []);
+
+  let triggerProductsArr = safeJSON(String(form.get("upsellTriggerProductIds") || "[]"), []);
+
+  if (upsellTriggerType === "product" && triggerCollections.length > 0) {
+    for (const col of triggerCollections) {
+      try {
+        const colRes = await admin.graphql(
+          `#graphql
+          query GetCollectionProducts($id: ID!) {
+            collection(id: $id) {
+              products(first: 250) { nodes { id title } }
+            }
+          }`,
+          { variables: { id: col.id } }
+        );
+        const colJson = await colRes.json();
+        const colProducts = colJson.data?.collection?.products?.nodes || [];
+        for (const p of colProducts) {
+          if (!triggerProductsArr.find((e) => e.id === p.id)) {
+            triggerProductsArr.push({ id: p.id, title: p.title });
+          }
+        }
+      } catch (_) {}
+    }
+  }
 
   const data = {
     upsellEnabled: form.get("upsellEnabled") === "true",
     upsellTitle: String(form.get("upsellTitle") || "You might also like"),
-    upsellTriggerType: String(form.get("upsellTriggerType") || "cartValue"),
+    upsellTriggerType,
     upsellMinCartValue: parseFloat(form.get("upsellMinCartValue") || "50"),
     upsellMinQuantity: parseInt(form.get("upsellMinQuantity") || "2", 10),
     upsellProducts: String(form.get("upsellProducts") || "[]"),
-    upsellTriggerProductIds: String(form.get("upsellTriggerProductIds") || "[]"),
+    upsellTriggerProductIds: JSON.stringify(triggerProductsArr),
+    upsellTriggerCollectionIds: upsellTriggerCollectionIdsRaw,
     aiUpsellEnabled: form.get("aiUpsellEnabled") === "true",
     aiUpsellTitle: String(form.get("aiUpsellTitle") || "Customers Also Bought"),
     aiUpsellIntent: String(form.get("aiUpsellIntent") || "related"),
@@ -53,14 +83,47 @@ export default function UpsellSettings() {
   const [minQty, setMinQty] = useState(s.upsellMinQuantity ?? 2);
   const [upsellProducts, setUpsellProducts] = useState(() => safeJSON(s.upsellProducts, []));
   const [triggerProducts, setTriggerProducts] = useState(() => safeJSON(s.upsellTriggerProductIds, []));
+  const [triggerCollections, setTriggerCollections] = useState(() => safeJSON(s.upsellTriggerCollectionIds, []));
   const [aiEnabled, setAiEnabled] = useState(s.aiUpsellEnabled ?? false);
   const [aiTitle, setAiTitle] = useState(s.aiUpsellTitle ?? "Customers Also Bought");
   const [aiIntent, setAiIntent] = useState(s.aiUpsellIntent ?? "related");
   const [aiLimit, setAiLimit] = useState(s.aiUpsellLimit ?? 4);
 
+  function snap() {
+    return JSON.stringify({ enabled, title, triggerType, minCartValue, minQty,
+      upsellProducts, triggerProducts, triggerCollections, aiEnabled, aiTitle, aiIntent, aiLimit });
+  }
+  const savedSnap = useRef(snap());
+  const [isDirty, setIsDirty] = useState(false);
+
   useEffect(() => {
-    if (fetcher.data?.success) shopify.toast.show("Upsell settings saved!");
+    setIsDirty(snap() !== savedSnap.current);
+  }, [enabled, title, triggerType, minCartValue, minQty, upsellProducts, triggerProducts, triggerCollections,
+      aiEnabled, aiTitle, aiIntent, aiLimit]);
+
+  useEffect(() => {
+    if (fetcher.data?.success) {
+      shopify.toast.show("Upsell settings saved!");
+      savedSnap.current = snap();
+      setIsDirty(false);
+    }
   }, [fetcher.data]);
+
+  function handleDiscard() {
+    const s = settings || {};
+    setEnabled(s.upsellEnabled ?? false);
+    setTitle(s.upsellTitle ?? "You might also like");
+    setTriggerType(s.upsellTriggerType ?? "cartValue");
+    setMinCartValue(s.upsellMinCartValue ?? 50);
+    setMinQty(s.upsellMinQuantity ?? 2);
+    setUpsellProducts(safeJSON(s.upsellProducts, []));
+    setTriggerProducts(safeJSON(s.upsellTriggerProductIds, []));
+    setTriggerCollections(safeJSON(s.upsellTriggerCollectionIds, []));
+    setAiEnabled(s.aiUpsellEnabled ?? false);
+    setAiTitle(s.aiUpsellTitle ?? "Customers Also Bought");
+    setAiIntent(s.aiUpsellIntent ?? "related");
+    setAiLimit(s.aiUpsellLimit ?? 4);
+  }
 
   async function pickUpsellProducts() {
     const selected = await shopify.resourcePicker({
@@ -93,6 +156,13 @@ export default function UpsellSettings() {
     }
   }
 
+  async function pickTriggerCollections() {
+    const selected = await shopify.resourcePicker({ type: "collection", multiple: true, action: "select" });
+    if (selected && selected.length > 0) {
+      setTriggerCollections(selected.map((c) => ({ id: c.id, title: c.title })));
+    }
+  }
+
   function handleSubmit(e) {
     e.preventDefault();
     fetcher.submit(
@@ -104,6 +174,7 @@ export default function UpsellSettings() {
         upsellMinQuantity: String(minQty),
         upsellProducts: JSON.stringify(upsellProducts),
         upsellTriggerProductIds: JSON.stringify(triggerProducts),
+        upsellTriggerCollectionIds: JSON.stringify(triggerCollections),
         aiUpsellEnabled: String(aiEnabled),
         aiUpsellTitle: aiTitle,
         aiUpsellIntent: aiIntent,
@@ -115,9 +186,7 @@ export default function UpsellSettings() {
 
   return (
     <s-page heading="Upsell Settings">
-      <s-button slot="primary-action" onClick={handleSubmit} variant="primary" loading={saving ? true : undefined}>
-        Save Upsell Settings
-      </s-button>
+      {isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}
 
       {/* Enable toggle */}
       <s-section heading="Upsell Feature">
@@ -190,17 +259,36 @@ export default function UpsellSettings() {
             )}
 
             {triggerType === "product" && (
-              <div>
-                <label style={labelStyle}>Trigger Products</label>
-                <p style={{ ...helpText, marginBottom: 10 }}>
-                  Upsell appears only when one of these products is in the cart.
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                <div>
+                  <label style={labelStyle}>Trigger Products</label>
+                  <p style={{ ...helpText, marginBottom: 10 }}>
+                    Show upsell when any of these specific products is in the cart.
+                  </p>
+                  <button type="button" onClick={pickTriggerProducts} style={pickerBtn}>
+                    + Select Products
+                  </button>
+                  {triggerProducts.length > 0 && (
+                    <ProductChips products={triggerProducts} onRemove={(id) => setTriggerProducts(triggerProducts.filter((p) => p.id !== id))} />
+                  )}
+                </div>
+
+                <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: 16 }}>
+                  <label style={labelStyle}>Trigger Collections</label>
+                  <p style={{ ...helpText, marginBottom: 10 }}>
+                    Show upsell when any product from these collections is in the cart. Product list is synced when you save.
+                  </p>
+                  <button type="button" onClick={pickTriggerCollections} style={pickerBtn}>
+                    + Select Collections
+                  </button>
+                  {triggerCollections.length > 0 && (
+                    <ProductChips products={triggerCollections} onRemove={(id) => setTriggerCollections(triggerCollections.filter((c) => c.id !== id))} />
+                  )}
+                </div>
+
+                <p style={{ ...helpText, color: "#1773b0" }}>
+                  Products and collections are combined — upsell shows if any match is found in the cart.
                 </p>
-                <button type="button" onClick={pickTriggerProducts} style={pickerBtn}>
-                  + Select Trigger Products
-                </button>
-                {triggerProducts.length > 0 && (
-                  <ProductChips products={triggerProducts} onRemove={(id) => setTriggerProducts(triggerProducts.filter((p) => p.id !== id))} />
-                )}
               </div>
             )}
           </s-stack>
@@ -372,6 +460,32 @@ const removeBtn = {
 
 function safeJSON(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
+}
+
+function SaveBar({ onSave, onDiscard, saving }) {
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#fff", borderBottom: "1px solid #e5e7eb",
+      boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "14px 28px",
+    }}>
+      <span style={{ fontSize: 13, fontWeight: 500, color: "#6b7280" }}>Unsaved changes</span>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <button onClick={onDiscard} disabled={saving} style={{
+          padding: "8px 18px", borderRadius: 7, border: "1.5px solid #d1d5db",
+          background: "#fff", color: "#374151", fontSize: 13, fontWeight: 600,
+          cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1,
+        }}>Discard</button>
+        <button onClick={onSave} disabled={saving} style={{
+          padding: "8px 22px", borderRadius: 7, border: "none",
+          background: saving ? "#374151" : "#111827", color: "#fff", fontSize: 13, fontWeight: 700,
+          cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.75 : 1,
+        }}>{saving ? "Saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
 }
 
 export const headers = (headersArgs) => boundary.headers(headersArgs);

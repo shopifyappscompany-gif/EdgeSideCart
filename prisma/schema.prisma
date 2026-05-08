@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -63,7 +63,8 @@ model CartSettings {
   upsellMinCartValue      Float   @default(50)
   upsellMinQuantity       Int     @default(2)
   upsellProducts          String  @default("[]")
-  upsellTriggerProductIds String  @default("[]")
+  upsellTriggerProductIds    String  @default("[]")
+  upsellTriggerCollectionIds String  @default("[]")
 
   // Freebie
   freebieEnabled           Boolean @default(false)
@@ -74,8 +75,12 @@ model CartSettings {
   freebieProductVariantId  String?
   freebieProductTitle      String?
   freebieProductImageUrl   String?
-  freebieTriggerProductIds String  @default("[]")
-  freebieConfettiEnabled   Boolean @default(true)
+  freebieTriggerProductIds    String  @default("[]")
+  freebieTriggerCollectionIds String  @default("[]")
+  freebieMaxCartValue         Float?
+  freebieMaxQuantity          Int?
+  freebieConditionLogic       String  @default("AND")
+  freebieConfettiEnabled      Boolean @default(true)
 
   // Scarcity countdown timer
   scarcityEnabled   Boolean @default(false)
@@ -94,10 +99,113 @@ model CartSettings {
   aiUpsellIntent  String  @default("related")
   aiUpsellLimit   Int     @default(4)
 
+  // Multiple freebie offers (up to 5)
+  freebieOffers String @default("[]")
+
+  // Block /cart page — redirect to side cart instead
+  blockCartPage Boolean @default(false)
+
   // Custom code injection
   customCss String @default("")
   customJs  String @default("")
 
+  // Custom cart icon selector (for themes not in the built-in map)
+  customCartIconSelector String @default("")
+
+  // Line item title links
+  clickableLineItems Boolean @default(true)
+
+  // Add-to-cart behavior: "drawer" (open side cart) | "toast" (show popup)
+  addToCartBehavior    String @default("drawer")
+  addToCartToastSeconds Int   @default(3)
+
+  // Order summary dropdown above checkout button
+  orderSummaryEnabled Boolean @default(true)
+
+  // One-click upsell (checkbox below cart items)
+  ocuEnabled           Boolean @default(false)
+  ocuHeading           String  @default("Complete your order")
+  ocuLabel             String  @default("Add to your order")
+  ocuHideWhenInCart    Boolean @default(true)
+  ocuProductVariantId  String  @default("")
+  ocuProductTitle      String  @default("")
+  ocuProductImageUrl   String  @default("")
+  ocuProductPrice      Int     @default(0)
+
+  // Billing plan: "starter" | "growth" | "enterprise"
+  planName    String  @default("starter")
+  freeForever Boolean @default(false)
+
+  // Free Shipping Progress Bar
+  freeShippingBarEnabled   Boolean @default(false)
+  freeShippingThreshold    Float   @default(50)
+  freeShippingText         String  @default("Add {{amount}} more for FREE shipping!")
+  freeShippingUnlockedText String  @default("You've unlocked free shipping!")
+
+  // Trust Badges
+  trustBadgesEnabled Boolean @default(false)
+  trustBadges        String  @default("[]")
+
+  // Sticky Add-to-Cart
+  stickyAtcEnabled Boolean @default(false)
+  stickyAtcText    String  @default("Add to Cart")
+
+  // Express Checkout Buttons
+  expressCheckoutEnabled   Boolean @default(false)
+  expressCheckoutShopPay   Boolean @default(true)
+  expressCheckoutApplePay  Boolean @default(true)
+  expressCheckoutGooglePay Boolean @default(false)
+
+  // Volume Discounts
+  volumeDiscountEnabled Boolean @default(false)
+  volumeDiscountTitle   String  @default("Buy more, save more!")
+  volumeDiscounts       String  @default("[]")
+
+  // Gift Wrap
+  giftWrapEnabled          Boolean @default(false)
+  giftWrapHeading          String  @default("Gift Options")
+  giftWrapLabel            String  @default("Add gift wrap")
+  giftWrapHideWhenInCart   Boolean @default(true)
+  giftWrapProductVariantId String  @default("")
+  giftWrapProductTitle     String  @default("")
+  giftWrapProductImageUrl  String  @default("")
+  giftWrapPrice            Int     @default(0)
+
+  // Stock Scarcity on Line Items
+  stockScarcityEnabled   Boolean @default(false)
+  stockScarcityThreshold Int     @default(5)
+  stockScarcityText      String  @default("Only {{count}} left!")
+
+  // Recently Viewed (empty cart)
+  recentlyViewedEnabled Boolean @default(false)
+  recentlyViewedTitle   String  @default("You might also like")
+  recentlyViewedLimit   Int     @default(4)
+
+  // Cart Share Link
+  cartShareEnabled Boolean @default(false)
+  cartShareText    String  @default("Share your cart")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model CartEvent {
+  id        String   @id @default(cuid())
+  shop      String
+  event     String   // cart_open | checkout | upsell_add | freebie_add
+  revenue   Int      @default(0)  // cart total in cents at event time
+  variantId String?  // for upsell_add / freebie_add
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, event])
+}
+
+model SupportMessage {
+  id        String   @id @default(cuid())
+  shop      String
+  name      String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
 }

@@ -8,6 +8,21 @@
   var PROXY = window.EdgeCartProxy || "/apps/edge-cart";
   var SHOP  = window.EdgeCartShop  || "";
 
+  /* Fire-and-forget analytics event — never blocks the UI */
+  function track(event, extra) {
+    try {
+      var payload = Object.assign({ event: event }, extra || {});
+      var url = PROXY + "/api/track" + (SHOP ? "?shop=" + encodeURIComponent(SHOP) : "");
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+        keepalive: true,
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
   /* ── State ─────────────────────────────────────────────── */
   var settings          = null;
   var cart              = null;
@@ -25,10 +40,15 @@
   var isOpen            = false;
   var initialized       = false;
   var updatingKeys      = {};
-  var freebieAutoSync   = false;
-  var freebieRetryAt    = 0;    /* timestamp: don't retry before this */
-  var ecHandlingAdd     = false;
-  var scarcityTimer     = null;
+  var freebieAutoSync      = {};   /* keyed by offer.id */
+  var freebieRetryAt       = {};   /* keyed by offer.id */
+  var maxExceededNotified  = {};   /* keyed by offer.id — prevents toast spam */
+  var tierUnlockedState    = {};   /* keyed by tier.id — fires confetti on unlock transition */
+  var ecHandlingAdd        = false;
+  var scarcityTimer        = null;
+  var inventoryCache       = {};   /* keyed by variant_id — stores inventory_quantity */
+  var cartShareToastTimer  = null;
+  var orderSummaryOpen     = false;
 
   /* ===========================================================
      BOOT
@@ -38,16 +58,41 @@
       .then(function (results) {
         settings = results[0];
         cart     = results[1];
+        if (settings && settings.blockCartPage && window.location.pathname === "/cart") {
+          sessionStorage.setItem("ec-reopen-cart", "1");
+          var ref = document.referrer;
+          var sameOrigin = ref && ref.startsWith(window.location.origin) && ref.indexOf("/cart") === -1;
+          window.location.replace(sameOrigin ? ref : "/");
+          return;
+        }
         if (!settings || !settings.enabled) return;
         injectDynamicCSS();
         injectCustomCode();
         buildDOM();
+        replaceThemeCartIcon();
+        suppressThemeCart();
         attachGlobalListeners();
         initialized = true;
+
+        /* ── Public API — callable from console, GoKwik, or any 3rd-party script ── */
+        window.EdgeCart = {
+          open:    function () { loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); }); },
+          close:   closeCart,
+          toggle:  function () { if (isOpen) closeCart(); else window.EdgeCart.open(); },
+          refresh: function () { loadCart().then(function (c) { cart = c; render(); syncFreebie(); }); },
+          isOpen:  function () { return isOpen; },
+        };
+
+        if (sessionStorage.getItem("ec-reopen-cart")) {
+          sessionStorage.removeItem("ec-reopen-cart");
+          setTimeout(openCart, 300);
+        }
         if (settings.autoDiscountEnabled && settings.autoDiscountCode) {
           applyDiscount(settings.autoDiscountCode);
         }
         syncFreebie();
+        trackRecentlyViewed();
+        initStickyAtc();
       })
       .catch(function (err) {
         console.warn("[EdgeCart] init error:", err);
@@ -78,7 +123,13 @@
     }).then(function (r) {
       ecHandlingAdd = false;
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.description || "Add failed"); });
-      return loadCart().then(function (c) { cart = c; document.dispatchEvent(new CustomEvent('cart:updated')); });
+      return r.json().then(function (addedItem) {
+        return loadCart().then(function (c) {
+          cart = c;
+          document.dispatchEvent(new CustomEvent('cart:updated'));
+          return addedItem;
+        });
+      });
     }).catch(function (err) {
       ecHandlingAdd = false;
       throw err;
@@ -136,9 +187,10 @@
     });
   }
 
-  /* Step 1 — validate via Shopify Admin GraphQL to surface exact error messages.
-     Step 2 — apply via /discount/CODE so Shopify's session cookie is set.
-     Step 3 — reload /cart.js; Shopify returns all discount numbers, nothing is calculated here. */
+  /* Validate via Admin GraphQL, then apply via /discount/CODE iframe.
+     If the server explicitly rejects the code → show error.
+     If the server itself is unreachable (proxy/network error) → apply anyway
+     so valid codes are never blocked by infra issues. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -152,34 +204,49 @@
     if (isOpen) renderFooter();
 
     try {
-      var res;
+      /* Step 1: validate — check the code exists and is active on Shopify */
+      var validationData = null;
+      var serverReachable = false;
       try {
-        res = await fetch(
+        var res = await fetch(
           PROXY + "/api/validate-discount?code=" + encodeURIComponent(code),
           { credentials: "same-origin" }
         );
-      } catch (_) {
-        throw new Error("Network error — please check your connection");
+        if (res.ok) {
+          validationData = await res.json();
+          serverReachable = true;
+        }
+      } catch (_) { /* network error — server unreachable, fall through */ }
+
+      /* If server responded and said invalid → only block on real code errors,
+         not on auth/infra errors (expired session, missing scope, etc.) */
+      if (serverReachable && validationData && validationData.valid === false) {
+        var reason = validationData.reason || "";
+        var isRealCodeError = (
+          reason.indexOf("not found") >= 0 ||
+          reason.indexOf("has expired") >= 0 ||
+          reason.indexOf("not yet active") >= 0 ||
+          reason.indexOf("not active") >= 0 ||
+          reason.indexOf("usage limit") >= 0
+        );
+        if (isRealCodeError) {
+          discountCode    = "";
+          appliedDiscount = null;
+          discountError   = reason;
+          discountLoading = false;
+          if (isOpen) renderFooter();
+          return;
+        }
+        /* Auth/infra error — fall through and apply anyway */
       }
 
-      var data;
-      try { data = res.ok ? await res.json() : null; } catch (_) { data = null; }
-      if (!data) data = { valid: false, reason: "Could not reach validation server" };
-
-      if (!data.valid) {
-        discountCode    = "";
-        appliedDiscount = null;
-        discountError   = data.reason || "Invalid discount code";
-        discountLoading = false;
-        if (isOpen) renderFooter();
-        return;
-      }
-
-      /* Let Shopify apply and calculate everything */
+      /* Step 2: apply — set Shopify session cookie via hidden iframe */
       await applyDiscountSession(upperCode);
+
+      /* Step 3: reload cart to get updated totals */
       cart               = await loadCart();
       discountCode       = upperCode;
-      appliedDiscount    = data;
+      appliedDiscount    = validationData || { valid: true, code: upperCode };
       discountError      = "";
       discountLoading    = false;
       discountInputValue = "";
@@ -231,15 +298,15 @@
     drawer.innerHTML = [
       '<div class="ec-inner">',
         '<div class="ec-freebie-toast" id="ec-freebie-toast" aria-live="polite"></div>',
-        '<div class="ec-banner" id="ec-banner"></div>',
-        '<div class="ec-scarcity" id="ec-scarcity" style="display:none"></div>',
-        '<div class="ec-rewards" id="ec-rewards" style="display:none"></div>',
         '<div class="ec-header">',
           '<h2 class="ec-header__title" id="ec-header-title"></h2>',
           '<button class="ec-header__close" id="ec-close" aria-label="Close cart">',
             svgClose(),
           '</button>',
         '</div>',
+        '<div class="ec-banner" id="ec-banner"></div>',
+        '<div class="ec-scarcity" id="ec-scarcity" style="display:none"></div>',
+        '<div class="ec-rewards" id="ec-rewards" style="display:none"></div>',
         '<div class="ec-body" id="ec-body"></div>',
         '<div class="ec-footer" id="ec-footer"></div>',
       '</div>',
@@ -247,6 +314,11 @@
 
     document.body.appendChild(overlay);
     document.body.appendChild(drawer);
+
+    /* Add-to-cart toast (outside the drawer so it's visible when cart is closed) */
+    var atcToastEl = make("div", "ec-atc-toast");
+    atcToastEl.id = "ec-atc-toast";
+    document.body.appendChild(atcToastEl);
 
     on(drawer, "click", handleDrawerClick);
     on(id("ec-close"), "click", closeCart);
@@ -263,6 +335,7 @@
     renderBody();
     renderFooter();
     syncCartBadges();
+    syncMaxExceeded();
   }
 
   function renderBanner() {
@@ -369,22 +442,36 @@
       var threshFmt = useQty
         ? tier.threshold + (tier.threshold === 1 ? " item" : " items")
         : money(tier.threshold * 100);
-      var milLabel  = tier.unlockedLabel || tier.label || threshFmt;
-      var isGift    = /free|gift|product/i.test(milLabel);
+      var isGift    = /free|gift|product/i.test(tier.unlockedLabel || tier.label || "");
+
+      /* Fire confetti + 5-second toast when a tier transitions locked → unlocked */
+      var wasUnlocked = tierUnlockedState[tier.id];
+      if (unlocked && !wasUnlocked) {
+        if (tier.confettiEnabled !== false) launchConfetti();
+        showToast(tier.unlockedLabel || "🎉 Reward unlocked!", 5000, false);
+      }
+      tierUnlockedState[tier.id] = unlocked;
+
+      var lbl = tier.unlockedLabel || tier.label || threshFmt;
       return [
         '<div class="ec-rw__node' + (unlocked ? ' ec-rw__node--done' : '') + '" style="left:' + pct + '%">',
           '<span class="ec-rw__price">' + esc(threshFmt) + '</span>',
           '<div class="ec-rw__dot">' + (isGift ? svgRwGift(unlocked) : svgRwTag(unlocked)) + '</div>',
-          '<span class="ec-rw__lbl">' + esc(milLabel) + '</span>',
+          '<span class="ec-rw__lbl">' + esc(lbl) + '</span>',
         '</div>',
       ].join("");
     }).join("");
+
+    var clampedPct = Math.min(100, Math.max(0, fillPct));
+    var fillStyle = 'display:block;height:100%;width:' + clampedPct + '%;background:linear-gradient(90deg,#f472b6 0%,#dc2626 100%);border-radius:4px;';
 
     el.innerHTML = [
       '<div class="ec-rw__inner">',
         '<p class="ec-rw__msg">' + esc(msg) + '</p>',
         '<div class="ec-rw__stage">',
-          '<div class="ec-rw__bar"><div class="ec-rw__fill" style="width:' + fillPct + '%"></div></div>',
+          '<div class="ec-rw__bar">',
+            '<div style="' + fillStyle + '"></div>',
+          '</div>',
           nodesHTML,
         '</div>',
       '</div>',
@@ -401,39 +488,156 @@
     if (!body) return;
 
     if (!cart || cart.item_count === 0) {
-      body.innerHTML = [
-        '<div class="ec-empty">',
-          svgCart("ec-empty__icon"),
-          '<p class="ec-empty__text">Your cart is empty</p>',
-          '<p class="ec-empty__sub">Add items to get started</p>',
-          '<button class="ec-empty__btn" id="ec-keep-shopping">Continue Shopping</button>',
-        '</div>',
-      ].join("");
+      var rvHtml = "";
+      if (settings.recentlyViewedEnabled) {
+        rvHtml = buildRecentlyViewedHTML();
+      }
+      if (rvHtml) {
+        body.innerHTML = rvHtml;
+      } else {
+        body.innerHTML = [
+          '<div class="ec-empty">',
+            svgCart("ec-empty__icon"),
+            '<p class="ec-empty__text">Your cart is empty</p>',
+            '<p class="ec-empty__sub">Add items to get started</p>',
+            '<button class="ec-empty__btn" id="ec-keep-shopping">Continue Shopping</button>',
+          '</div>',
+        ].join("");
+      }
       on(id("ec-keep-shopping"), "click", closeCart);
       return;
     }
 
-    body.innerHTML = '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>';
+    var ocuBodyHtml = "";
+    if (settings.ocuEnabled && settings.ocuProductVariantId) {
+      var ocuBodyNumId = String(settings.ocuProductVariantId).replace(/[^0-9]/g, "");
+      var ocuBodyInCart = cart.items.some(function (i) { return String(i.variant_id) === ocuBodyNumId; });
+      var hideWhenInCart = settings.ocuHideWhenInCart !== false;
+      if (!(hideWhenInCart && ocuBodyInCart)) {
+        ocuBodyHtml = buildOcuHTML(ocuBodyInCart);
+      }
+    }
+
+    var giftWrapBodyHtml = "";
+    if (settings.giftWrapEnabled && settings.giftWrapProductVariantId) {
+      var gwNumId = String(settings.giftWrapProductVariantId).replace(/[^0-9]/g, "");
+      var gwInCart = cart.items.some(function (i) { return String(i.variant_id) === gwNumId; });
+      var gwHide = settings.giftWrapHideWhenInCart !== false;
+      if (!(gwHide && gwInCart)) {
+        giftWrapBodyHtml = buildGiftWrapHTML(gwInCart);
+      }
+    }
+
+    var freeShipHtml = settings.freeShippingBarEnabled ? buildFreeShippingBarHTML() : "";
+
+    body.innerHTML = freeShipHtml + '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>' + ocuBodyHtml + giftWrapBodyHtml;
+
+    /* Bind OCU checkbox */
+    var ocuBodyCheck = id("ec-ocu-check");
+    if (ocuBodyCheck && settings.ocuEnabled && settings.ocuProductVariantId) {
+      var ocuBodyId = String(settings.ocuProductVariantId).replace(/[^0-9]/g, "");
+      on(ocuBodyCheck, "change", function () {
+        if (ocuBodyCheck.checked) {
+          ocuBodyCheck.disabled = true;
+          cartAdd(ocuBodyId, 1, {}).catch(function () { ocuBodyCheck.checked = false; }).finally(function () { ocuBodyCheck.disabled = false; });
+        } else {
+          var ocuBodyItem = cart.items.find(function (i) { return String(i.variant_id) === ocuBodyId; });
+          if (ocuBodyItem) {
+            ocuBodyCheck.disabled = true;
+            cartChange(ocuBodyItem.key, 0).catch(function () { ocuBodyCheck.checked = true; }).finally(function () { ocuBodyCheck.disabled = false; });
+          }
+        }
+      });
+    }
+
+    /* Bind Gift Wrap checkbox */
+    var gwCheck = id("ec-gw-check");
+    if (gwCheck && settings.giftWrapEnabled && settings.giftWrapProductVariantId) {
+      var gwId = String(settings.giftWrapProductVariantId).replace(/[^0-9]/g, "");
+      on(gwCheck, "change", function () {
+        if (gwCheck.checked) {
+          gwCheck.disabled = true;
+          cartAdd(gwId, 1, { _edge_cart_gift_wrap: "true" }).catch(function () { gwCheck.checked = false; }).finally(function () { gwCheck.disabled = false; });
+        } else {
+          var gwItem = cart.items.find(function (i) { return String(i.variant_id) === gwId; });
+          if (gwItem) {
+            gwCheck.disabled = true;
+            cartChange(gwItem.key, 0).catch(function () { gwCheck.checked = true; }).finally(function () { gwCheck.disabled = false; });
+          }
+        }
+      });
+    }
+
+    /* Qty manual input */
+    qsa(".ec-qty__input", body).forEach(function(inp) {
+      on(inp, "change", function() {
+        var newQty = parseInt(inp.value, 10);
+        if (isNaN(newQty) || newQty < 1) { inp.value = inp.dataset.prevVal || 1; return; }
+        inp.dataset.prevVal = newQty;
+        doCartChange(inp.dataset.key, newQty);
+      });
+      on(inp, "focus", function() { inp.dataset.prevVal = inp.value; });
+      on(inp, "keydown", function(e) {
+        if (e.key === "Enter") { inp.blur(); }
+      });
+    });
+
+    /* Fetch inventory for stock scarcity (async) */
+    if (settings.stockScarcityEnabled) fetchInventoryForItems();
+  }
+
+  function getFreebieOffer(item) {
+    if (!settings) return null;
+    var offers = settings.freebieOffers || [];
+    for (var i = 0; i < offers.length; i++) {
+      var offer = offers[i];
+      if (!offer.productVariantId) continue;
+      var numId = extractId(offer.productVariantId);
+      if (String(item.variant_id) === numId ||
+          (item.properties && item.properties._edge_cart_freebie === "true")) {
+        return offer;
+      }
+    }
+    return null;
   }
 
   function isFreebieItem(item) {
-    if (!settings || !settings.freebieProductVariantId) return false;
-    var numId = extractId(settings.freebieProductVariantId);
-    return String(item.variant_id) === numId ||
-      (item.properties && item.properties._edge_cart_freebie === "true");
+    return !!getFreebieOffer(item);
   }
 
   function renderItem(item) {
-    var freebie = isFreebieItem(item);
+    var freebieOffer = getFreebieOffer(item);
+    var freebie = !!freebieOffer;
     var img = (item.featured_image && item.featured_image.url)
       ? item.featured_image.url
-      : (item.image || (freebie ? (settings.freebieProductImageUrl || "") : ""));
+      : (item.image || (freebie ? (freebieOffer.productImageUrl || "") : ""));
     var hasDisc = item.line_price < item.original_line_price;
     var isUpd   = updatingKeys[item.key];
+    var isFreebieLoading = freebie && freebieOffer && freebieAutoSync[freebieOffer.id];
     var showVar = settings.showVariantTitle !== false;
 
+    var qtyOrSpinner = isUpd
+      ? '<div class="ec-qty ec-qty--spin"><div class="ec-spin-circle"></div></div>'
+      : [
+          '<div class="ec-qty">',
+            '<button class="ec-qty__btn" data-action="' + (item.quantity <= 1 ? "remove" : "dec") + '" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity - 1) + '" aria-label="' + (item.quantity <= 1 ? "Remove" : "Decrease") + '">−</button>',
+            '<input class="ec-qty__val ec-qty__input" type="number" min="1" value="' + item.quantity + '" data-key="' + esc(item.key) + '" aria-label="Quantity">',
+            '<button class="ec-qty__btn" data-action="inc" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity + 1) + '" aria-label="Increase">+</button>',
+          '</div>',
+        ].join("");
+
+    var scarcityBadge = "";
+    if (settings.stockScarcityEnabled && !freebie) {
+      var invQty = inventoryCache[item.variant_id];
+      var threshold = settings.stockScarcityThreshold || 5;
+      if (invQty !== undefined && invQty !== null && invQty <= threshold && invQty > 0) {
+        var scarcityTxt = (settings.stockScarcityText || "Only {{count}} left!").replace("{{count}}", String(invQty));
+        scarcityBadge = '<span class="ec-item__scarcity">' + esc(scarcityTxt) + '</span>';
+      }
+    }
+
     return [
-      '<div class="ec-item' + (isUpd ? " ec-item--updating" : "") + (freebie ? " ec-item--freebie" : "") + '" data-key="' + esc(item.key) + '">',
+      '<div class="ec-item' + (isFreebieLoading ? " ec-item--syncing" : "") + (freebie ? " ec-item--freebie" : "") + '" data-key="' + esc(item.key) + '">',
         '<div class="ec-item__img">',
           img
             ? '<img src="' + esc(img) + '" alt="' + esc(item.product_title) + '" loading="lazy">'
@@ -442,25 +646,24 @@
         '<div class="ec-item__body">',
           '<div class="ec-item__top">',
             '<div class="ec-item__info">',
-              '<p class="ec-item__title">' + esc(item.product_title) + '</p>',
+              settings.clickableLineItems !== false
+                ? '<a class="ec-item__title ec-item__title--link" href="' + esc(item.url || ("/products/" + (item.handle || ""))) + '">' + esc(item.product_title) + '</a>'
+                : '<p class="ec-item__title">' + esc(item.product_title) + '</p>',
               showVar && item.variant_title && item.variant_title !== "Default Title"
                 ? '<p class="ec-item__variant">' + esc(item.variant_title) + '</p>'
                 : "",
+              scarcityBadge,
             '</div>',
             freebie
-              ? '<span class="ec-item__free-badge">FREE</span>'
+              ? (isFreebieLoading
+                  ? '<div class="ec-spin-circle ec-spin-circle--sm"></div>'
+                  : '<span class="ec-item__free-badge">FREE</span>')
               : '<button class="ec-item__remove" data-action="remove" data-key="' + esc(item.key) + '" aria-label="Remove">' + svgX() + '</button>',
           '</div>',
           '<div class="ec-item__bottom">',
             freebie
               ? '<span class="ec-item__gift-label">🎁 Free Gift</span>'
-              : [
-                '<div class="ec-qty">',
-                  '<button class="ec-qty__btn" data-action="dec" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity - 1) + '" aria-label="Decrease"' + (item.quantity <= 1 ? " disabled" : "") + '>−</button>',
-                  '<span class="ec-qty__val">' + item.quantity + '</span>',
-                  '<button class="ec-qty__btn" data-action="inc" data-key="' + esc(item.key) + '" data-qty="' + (item.quantity + 1) + '" aria-label="Increase">+</button>',
-                '</div>',
-              ].join(""),
+              : qtyOrSpinner,
             '<div class="ec-item__price">',
               freebie
                 ? '<span class="ec-item__line ec-item__line--free">$0.00</span>'
@@ -490,7 +693,10 @@
     var html = "";
 
     /* Freebie */
-    if (settings.freebieEnabled) html += buildFreebieHTML();
+    html += buildFreebieHTML();
+
+    /* Volume discounts */
+    if (settings.volumeDiscountEnabled) html += buildVolumeDiscountHTML();
 
     /* Static upsell */
     if (settings.upsellEnabled) html += buildUpsellHTML();
@@ -505,8 +711,8 @@
         var labelText = savings > 0
           ? "You save " + money(savings) + "!"
           : appliedDiscount.type === "free_shipping" ? "Free shipping applied!"
-          : appliedDiscount.type === "bxgy" ? (appliedDiscount.description || "Buy X Get Y applied!")
-          : "Applied at checkout";
+          : appliedDiscount.type === "bxgy" ? "Buy X Get Y applied!"
+          : "Discount applied at checkout";
         var savingsLabel = '<span class="ec-discount__saving' + (savings > 0 ? '' : ' ec-discount__saving--info') + '">' + esc(labelText) + '</span>';
         html += [
           '<div class="ec-discount">',
@@ -535,7 +741,7 @@
               '</button>',
             '</div>',
             discountLoading
-              ? '<p class="ec-discount__msg" aria-live="polite">Checking discount…</p>'
+              ? '<p class="ec-discount__msg" aria-live="polite">Applying discount…</p>'
               : discountError
                 ? '<p class="ec-discount__error" role="alert" aria-live="assertive">✗ ' + esc(discountError) + '</p>'
                 : '',
@@ -557,34 +763,70 @@
       ].join("");
     }
 
-    /* Summary */
+    /* Order Summary — BabyOrgano style: saved pill + collapsible detail */
+    if (settings.orderSummaryEnabled !== false) {
+      var autoDisc   = cart.original_total_price - cart.total_price - savings;
+      var totalSaved = (autoDisc > 0 ? autoDisc : 0) + savings;
+      var savingsPct = cart.original_total_price > 0
+        ? Math.round((totalSaved / cart.original_total_price) * 100) : 0;
+
+      var detailRows = [
+        autoDisc > 0 ? [
+          '<div class="ec-os__row"><span class="ec-os__row-label">MRP total</span><span class="ec-os__row-price">' + money(cart.original_total_price) + '</span></div>',
+          '<div class="ec-os__row"><span class="ec-os__row-label">Discount on MRP</span><span class="ec-os__row-green">−' + money(autoDisc) + '</span></div>',
+          '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
+        ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
+        savings > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(savings) + '</span></div>' : "",
+        '<div class="ec-os__row"><span class="ec-os__row-label">Shipping</span><span class="ec-os__row-free">FREE</span></div>',
+        totalSaved > 0 ? '<div class="ec-os__row ec-os__row--savings"><span class="ec-os__row-label">Total savings</span><span class="ec-os__row-green ec-os__row-green--bold">' + money(totalSaved) + '</span></div>' : "",
+        '<div class="ec-os__divider"></div>',
+        '<div class="ec-os__row ec-os__row--total"><span class="ec-os__row-total-label">Estimated Total</span><span class="ec-os__row-total-price">' + money(finalTotal) + '</span></div>',
+      ].join("");
+
+      html += [
+        '<div class="ec-os" id="ec-os">',
+          /* Green saved pill — only when savings exist */
+          totalSaved > 0 ? '<div class="ec-os__saved-bar">🎉 ' + money(totalSaved) + ' Saved so far!</div>' : "",
+          /* Toggle row — Estimated Total + price + % badge + chevron */
+          '<button class="ec-os__toggle" id="ec-os-toggle" type="button" aria-expanded="' + (orderSummaryOpen ? "true" : "false") + '">',
+            '<div class="ec-os__toggle-left">',
+              '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+              '<span class="ec-os__toggle-label">Estimated Total</span>',
+            '</div>',
+            '<div class="ec-os__toggle-right">',
+              totalSaved > 0 ? '<span class="ec-os__orig-price">' + money(cart.original_total_price) + '</span>' : "",
+              '<span class="ec-os__total-price">' + money(finalTotal) + '</span>',
+              savingsPct > 0 ? '<span class="ec-os__pct-badge">(' + savingsPct + '% OFF)</span>' : "",
+            '</div>',
+          '</button>',
+          /* Expandable detail panel */
+          '<div class="ec-os__panel' + (orderSummaryOpen ? " ec-os__panel--open" : "") + '" id="ec-os-panel">',
+            '<div class="ec-os__panel-inner">',
+              '<div class="ec-os__panel-header">',
+                '<span class="ec-os__panel-title">Order Summary</span>',
+                totalSaved > 0 ? '<span class="ec-os__panel-saved">' + money(totalSaved) + ' saved so far</span>' : "",
+              '</div>',
+              detailRows,
+            '</div>',
+          '</div>',
+        '</div>',
+      ].join("");
+    }
+
+    /* Cart share link */
+    if (settings.cartShareEnabled) html += buildCartShareHTML();
+
     html += [
-      '<div class="ec-summary">',
-        savings > 0 ? [
-          '<div class="ec-summary__row">',
-            '<span class="ec-summary__label">Subtotal</span>',
-            '<span class="ec-summary__price ec-summary__price--struck">' + money(subtotal) + '</span>',
-          '</div>',
-          '<div class="ec-summary__row ec-summary__row--savings">',
-            '<span class="ec-summary__label">Discount (' + esc(discountCode) + ')</span>',
-            '<span class="ec-summary__savings">−' + money(savings) + '</span>',
-          '</div>',
-          '<div class="ec-summary__row">',
-            '<span class="ec-summary__label ec-summary__label--total">Total</span>',
-            '<span class="ec-summary__price">' + money(finalTotal) + '</span>',
-          '</div>',
-        ].join("") : [
-          '<div class="ec-summary__row">',
-            '<span class="ec-summary__label">Subtotal</span>',
-            '<span class="ec-summary__price">' + money(subtotal) + '</span>',
-          '</div>',
-        ].join(""),
-        '<p class="ec-summary__note">Taxes & shipping calculated at checkout</p>',
-      '</div>',
       '<button class="ec-checkout-btn" id="ec-checkout">',
         'Checkout · ' + money(finalTotal),
       '</button>',
     ].join("");
+
+    /* Express checkout */
+    if (settings.expressCheckoutEnabled) html += buildExpressCheckoutHTML();
+
+    /* Trust badges */
+    if (settings.trustBadgesEnabled) html += buildTrustBadgesHTML();
 
     footer.innerHTML = html;
 
@@ -609,14 +851,59 @@
       on(noteInput, "input", function () { orderNote = noteInput.value; });
     }
 
+    /* Bind order summary toggle */
+    var osToggle = id("ec-os-toggle");
+    var osPanel  = id("ec-os-panel");
+    if (osToggle && osPanel) {
+      on(osToggle, "click", function () {
+        orderSummaryOpen = !orderSummaryOpen;
+        osToggle.setAttribute("aria-expanded", orderSummaryOpen ? "true" : "false");
+        osPanel.classList.toggle("ec-os__panel--open", orderSummaryOpen);
+        osToggle.classList.toggle("ec-os__toggle--open", orderSummaryOpen);
+      });
+    }
+
     /* Bind checkout */
     var checkoutBtn = id("ec-checkout");
     if (checkoutBtn) on(checkoutBtn, "click", handleCheckout);
+
+    /* Bind cart share */
+    var shareBtn = id("ec-cart-share-btn");
+    if (shareBtn) {
+      on(shareBtn, "click", function () {
+        var permalink = "https://" + window.location.hostname + "/cart/" +
+          cart.items.map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(permalink).then(function () {
+            shareBtn.textContent = "Link copied!";
+            if (cartShareToastTimer) clearTimeout(cartShareToastTimer);
+            cartShareToastTimer = setTimeout(function () {
+              shareBtn.textContent = "🔗 " + esc(settings.cartShareText || "Share your cart");
+            }, 2500);
+          }).catch(function () {
+            shareBtn.textContent = "Copy failed";
+          });
+        } else {
+          var ta = document.createElement("textarea");
+          ta.value = permalink;
+          ta.style.cssText = "position:fixed;top:-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); shareBtn.textContent = "Link copied!"; } catch (_) {}
+          document.body.removeChild(ta);
+          if (cartShareToastTimer) clearTimeout(cartShareToastTimer);
+          cartShareToastTimer = setTimeout(function () {
+            shareBtn.textContent = "🔗 " + esc(settings.cartShareText || "Share your cart");
+          }, 2500);
+        }
+      });
+    }
   }
 
   function handleCheckout() {
     var btn = id("ec-checkout");
     if (btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+    track("checkout", { revenue: cart ? cart.total_price : 0 });
     function go() { window.location.href = checkoutUrl(); }
     if (settings.orderNotesEnabled && orderNote.trim()) {
       cartUpdateNote(orderNote.trim()).then(go).catch(go);
@@ -626,19 +913,75 @@
   }
 
   /* ── Freebie toast popup ───────────────────────────────── */
-  function showFreebieToast() {
+  function showToast(text, duration, withConfetti) {
     var toast = id("ec-freebie-toast");
     if (!toast) return;
-    toast.textContent = settings.freebieTitle || "🎁 Free gift added to your cart!";
+    toast.textContent = text || "";
     toast.classList.add("ec-freebie-toast--visible");
     if (freebieToastTimer) clearTimeout(freebieToastTimer);
     freebieToastTimer = setTimeout(function () {
       toast.classList.remove("ec-freebie-toast--visible");
       freebieToastTimer = null;
-    }, 3500);
+    }, duration || 3500);
+    if (withConfetti) launchConfetti();
+  }
 
-    if (settings.freebieConfettiEnabled !== false) {
-      launchConfetti();
+  function showFreebieToast(offer) {
+    showToast(
+      (offer && offer.title) || "🎁 Free gift added to your cart!",
+      3500,
+      offer ? offer.confettiEnabled !== false : settings.freebieConfettiEnabled !== false
+    );
+  }
+
+  /* ── Add-to-cart toast ─────────────────────────────────── */
+  var atcToastTimer = null;
+  function showAddToCartToast(item) {
+    var el = id("ec-atc-toast");
+    if (!el) return;
+    var img = (item && (item.featured_image && item.featured_image.url || item.image)) || "";
+    var title = (item && item.product_title) || "Item";
+    el.innerHTML = [
+      img ? '<img class="ec-atc-toast__img" src="' + esc(img) + '" alt="">' : '<div class="ec-atc-toast__img-placeholder"></div>',
+      '<div class="ec-atc-toast__body">',
+        '<span class="ec-atc-toast__check">✓</span>',
+        '<div>',
+          '<strong class="ec-atc-toast__title">' + esc(title) + '</strong>',
+          '<span class="ec-atc-toast__sub">Added to cart</span>',
+        '</div>',
+      '</div>',
+      '<button class="ec-atc-toast__view" id="ec-atc-view-cart">View Cart</button>',
+    ].join("");
+    el.classList.add("ec-atc-toast--visible");
+    var viewBtn = id("ec-atc-view-cart");
+    if (viewBtn) {
+      viewBtn.addEventListener("click", function () {
+        el.classList.remove("ec-atc-toast--visible");
+        openCart();
+      });
+    }
+    if (atcToastTimer) clearTimeout(atcToastTimer);
+    var secs = (settings && settings.addToCartToastSeconds) || 3;
+    atcToastTimer = setTimeout(function () {
+      el.classList.remove("ec-atc-toast--visible");
+      atcToastTimer = null;
+    }, secs * 1000);
+  }
+
+  function handlePostAdd(addedItem, cartAlreadyLoaded) {
+    function proceed() {
+      syncCartBadges();
+      if (settings && settings.addToCartBehavior === "toast") {
+        showAddToCartToast(addedItem);
+      } else {
+        render(); openCart();
+      }
+      syncFreebie();
+    }
+    if (cartAlreadyLoaded) {
+      proceed();
+    } else {
+      loadCart().then(function (c) { cart = c; proceed(); });
     }
   }
 
@@ -697,93 +1040,460 @@
     requestAnimationFrame(frame);
   }
 
-  /* ── Freebie HTML ──────────────────────────────────────── */
+  /* ── Freebie HTML — multi-offer ───────────────────────── */
   function buildFreebieHTML() {
-    if (!settings.freebieProductVariantId) return "";
+    var offers = settings.freebieOffers || [];
+    if (!offers.length) return "";
 
-    var numId    = extractId(settings.freebieProductVariantId);
-    var inCart   = cart.items.some(function (i) { return String(i.variant_id) === numId; });
-    var unlocked = checkFreebie();
+    var html = "";
+    offers.forEach(function (offer) {
+      if (!offer.enabled || !offer.productVariantId) return;
+      var numId    = extractId(offer.productVariantId);
+      var inCart   = cart.items.some(function (i) { return String(i.variant_id) === numId; });
+      var unlocked = checkOffer(offer);
 
-    /* In cart already — it shows as a styled green line item */
-    if (inCart) {
-      /* Threshold no longer met — trigger removal on every render pass */
-      if (!unlocked && !freebieAutoSync) syncFreebie();
-      return "";
-    }
-
-    /* Threshold met — auto-add silently in background; toast appears when done */
-    if (unlocked) {
-      if (!freebieAutoSync && Date.now() >= freebieRetryAt) {
-        syncFreebie();
+      /* In cart — shows as a line item; trigger removal if no longer unlocked */
+      if (inCart) {
+        if (!unlocked && !freebieAutoSync[offer.id]) syncOfferFreebie(offer);
+        return;
       }
-      return "";
-    }
 
-    /* Locked — show progress bar only */
-    var prog = freebieProgress();
-    if (!prog || !prog.msg) return "";
+      /* Unlocked — auto-add silently */
+      if (unlocked) {
+        if (!freebieAutoSync[offer.id] && Date.now() >= (freebieRetryAt[offer.id] || 0)) {
+          syncOfferFreebie(offer);
+        }
+        return;
+      }
+
+      /* Locked — show progress bar */
+      var prog = offerProgress(offer);
+      if (!prog || !prog.msg) return;
+      html += [
+        '<div class="ec-freebie ec-freebie--locked">',
+          '<p class="ec-freebie__msg">' + esc(prog.msg) + '</p>',
+          '<div class="ec-freebie__bar-track">',
+            '<div class="ec-freebie__bar-fill" style="width:' + prog.pct + '%"></div>',
+          '</div>',
+        '</div>',
+      ].join("");
+    });
+
+    return html;
+  }
+
+  /* ── Freebie auto-sync — multi-offer ─────────────────── */
+  function syncFreebie() {
+    if (!settings || !cart) return;
+    var offers = settings.freebieOffers || [];
+    offers.forEach(function (offer) {
+      if (offer.enabled && offer.productVariantId) syncOfferFreebie(offer);
+    });
+  }
+
+  function syncOfferFreebie(offer) {
+    if (freebieAutoSync[offer.id]) return;
+    if (!cart) return;
+
+    var numId       = extractId(offer.productVariantId);
+    var freebieItem = cart.items.find(function (i) { return String(i.variant_id) === numId; });
+    var realItems   = cart.items.filter(function (i) { return String(i.variant_id) !== numId; });
+
+    if (!freebieItem && realItems.length === 0) return;
+
+    var unlocked = checkOffer(offer);
+
+    if (unlocked && !freebieItem) {
+      if (Date.now() < (freebieRetryAt[offer.id] || 0)) return;
+
+      freebieAutoSync[offer.id] = true;
+      if (isOpen) renderBody();
+      cartAdd(numId, 1, { _edge_cart_freebie: "true" })
+        .then(function () {
+          freebieAutoSync[offer.id] = false;
+          freebieRetryAt[offer.id]  = 0;
+          track("freebie_add", { variantId: offer.productVariantId, revenue: cart ? cart.total_price : 0 });
+          showFreebieToast(offer);
+          syncOfferFreebie(offer);
+          if (isOpen) render();
+          syncCartBadges();
+        })
+        .catch(function (err) {
+          freebieAutoSync[offer.id] = false;
+          freebieRetryAt[offer.id]  = 0;
+          console.warn("[EdgeCart] Freebie auto-add failed:", err.message || err);
+        });
+
+    } else if (!unlocked && freebieItem) {
+      freebieAutoSync[offer.id] = true;
+      if (isOpen) renderBody();
+      cartChange(freebieItem.key, 0)
+        .then(function () {
+          freebieAutoSync[offer.id] = false;
+          freebieRetryAt[offer.id]  = 0;
+          syncOfferFreebie(offer);
+          if (isOpen) render();
+          syncCartBadges();
+        })
+        .catch(function (err) {
+          freebieAutoSync[offer.id] = false;
+          console.warn("[EdgeCart] Freebie auto-remove failed:", err.message || err);
+        });
+    }
+  }
+
+  /* ── Max-exceeded toast — once per state change ──────────── */
+  function syncMaxExceeded() {
+    if (!settings || !cart) return;
+    var offers = settings.freebieOffers || [];
+    offers.forEach(function (offer) {
+      if (!offer.enabled) return;
+      var exceeded = isOfferMaxExceeded(offer);
+      if (exceeded && !maxExceededNotified[offer.id]) {
+        maxExceededNotified[offer.id] = true;
+        var limitStr = offer.triggerType === "quantity"
+          ? (offer.maxQuantity + " item" + (offer.maxQuantity !== 1 ? "s" : ""))
+          : moneyVal(offer.maxCartValue * 100);
+        showToast("ℹ️ Free gift applies to orders up to " + limitStr + " only", 10000, false);
+      } else if (!exceeded) {
+        maxExceededNotified[offer.id] = false;
+      }
+    });
+  }
+
+  function isOfferMaxExceeded(offer) {
+    if (!cart) return false;
+    var fid = offer.productVariantId ? extractId(offer.productVariantId) : null;
+    if (offer.triggerType === "cartValue") {
+      return !!(offer.maxCartValue && (cart.total_price / 100) > offer.maxCartValue);
+    }
+    if (offer.triggerType === "quantity") {
+      if (!offer.maxQuantity) return false;
+      var qty = cart.items.reduce(function (s, i) {
+        return String(i.variant_id) === fid ? s : s + i.quantity;
+      }, 0);
+      return qty > offer.maxQuantity;
+    }
+    return false;
+  }
+
+  /* ── Free Shipping Progress Bar HTML ───────────────────── */
+  function buildFreeShippingBarHTML() {
+    if (!settings || !settings.freeShippingBarEnabled || !cart) return "";
+    var threshold = settings.freeShippingThreshold || 50;
+    var cartVal = cart.total_price / 100;
+    var rem = Math.max(0, threshold - cartVal);
+    var pct = Math.min(100, Math.round((cartVal / threshold) * 100));
+    var unlocked = cartVal >= threshold;
+    var msg = unlocked
+      ? esc(settings.freeShippingUnlockedText || "You've unlocked free shipping!")
+      : esc((settings.freeShippingText || "Add {{amount}} more for FREE shipping!").replace("{{amount}}", moneyVal(rem * 100)));
     return [
-      '<div class="ec-freebie ec-freebie--locked">',
-        '<p class="ec-freebie__msg">' + esc(prog.msg) + '</p>',
-        '<div class="ec-freebie__bar-track">',
-          '<div class="ec-freebie__bar-fill" style="width:' + prog.pct + '%"></div>',
+      '<div class="ec-free-ship">',
+        '<p class="ec-free-ship__msg' + (unlocked ? ' ec-free-ship__msg--done' : '') + '">' + msg + '</p>',
+        '<div class="ec-free-ship__track">',
+          '<div class="ec-free-ship__fill" style="width:' + pct + '%"></div>',
         '</div>',
       '</div>',
     ].join("");
   }
 
-  /* ── Freebie auto-sync ─────────────────────────────────── */
-  function syncFreebie() {
-    if (freebieAutoSync) return;
-    if (!settings || !settings.freebieEnabled || !settings.freebieProductVariantId) return;
-    if (!cart) return;
+  /* ── Volume Discount Table HTML ─────────────────────────── */
+  function buildVolumeDiscountHTML() {
+    var tiers = settings.volumeDiscounts || [];
+    if (!tiers.length) return "";
+    var itemCount = cart ? cart.item_count : 0;
+    var rows = tiers.map(function (t) {
+      var active = itemCount >= t.qty;
+      return [
+        '<tr class="' + (active ? 'ec-vd__row--active' : '') + '">',
+          '<td class="ec-vd__cell">Buy ' + t.qty + '+</td>',
+          '<td class="ec-vd__cell ec-vd__cell--pct">' + t.pct + '% off' + (active ? ' ✓' : '') + '</td>',
+        '</tr>',
+      ].join("");
+    }).join("");
+    return [
+      '<div class="ec-vd">',
+        '<p class="ec-vd__title">' + esc(settings.volumeDiscountTitle || "Buy more, save more!") + '</p>',
+        '<table class="ec-vd__table"><tbody>' + rows + '</tbody></table>',
+      '</div>',
+    ].join("");
+  }
 
-    var numId       = extractId(settings.freebieProductVariantId);
-    var freebieItem = cart.items.find(function (i) { return String(i.variant_id) === numId; });
-    var realItems   = cart.items.filter(function (i) { return String(i.variant_id) !== numId; });
+  /* ── Gift Wrap HTML ─────────────────────────────────────── */
+  function buildGiftWrapHTML(checked) {
+    var price = settings.giftWrapPrice ? ' · ' + money(settings.giftWrapPrice) : '';
+    var heading = settings.giftWrapHeading || 'Gift Options';
+    return [
+      '<div class="ec-gw" id="ec-gw">',
+        '<p class="ec-gw__heading">' + esc(heading) + '</p>',
+        '<label class="ec-gw__label">',
+          '<input class="ec-gw__check" id="ec-gw-check" type="checkbox"' + (checked ? ' checked' : '') + '>',
+          settings.giftWrapProductImageUrl
+            ? '<img class="ec-gw__img" src="' + esc(settings.giftWrapProductImageUrl) + '" alt="" loading="lazy">'
+            : '',
+          '<div class="ec-gw__info">',
+            '<span class="ec-gw__add-label">🎁 ' + esc(settings.giftWrapLabel || 'Add gift wrap') + '</span>',
+            settings.giftWrapProductTitle
+              ? '<span class="ec-gw__name">' + esc(settings.giftWrapProductTitle) + price + '</span>'
+              : '',
+          '</div>',
+        '</label>',
+      '</div>',
+    ].join('');
+  }
 
-    /* Empty cart with no freebie — nothing to do */
-    if (!freebieItem && realItems.length === 0) return;
+  /* ── Express Checkout Buttons HTML ─────────────────────── */
+  function buildExpressCheckoutHTML() {
+    var methods = [];
+    if (settings.expressCheckoutShopPay)   methods.push({ label: "Shop Pay",   cls: "ec-express__shop-pay",   txt: "Shop Pay" });
+    if (settings.expressCheckoutApplePay)  methods.push({ label: "Apple Pay",  cls: "ec-express__apple-pay",  txt: "Apple Pay" });
+    if (settings.expressCheckoutGooglePay) methods.push({ label: "Google Pay", cls: "ec-express__google-pay", txt: "Google Pay" });
+    if (!methods.length) return "";
+    var url = checkoutUrl();
+    var btns = methods.map(function (m) {
+      return '<a class="ec-express__btn ' + m.cls + '" href="' + esc(url) + '">' + m.txt + '</a>';
+    }).join("");
+    return [
+      '<div class="ec-express">',
+        '<div class="ec-express__divider"><span>or pay with</span></div>',
+        '<div class="ec-express__row">' + btns + '</div>',
+      '</div>',
+    ].join("");
+  }
 
-    var unlocked = checkFreebie();
+  /* ── Trust Badges HTML ──────────────────────────────────── */
+  function buildTrustBadgesHTML() {
+    var badges = settings.trustBadges || [];
+    var enabled = badges.filter(function (b) { return b.enabled !== false; });
+    if (!enabled.length) return "";
+    var items = enabled.map(function (b) {
+      return [
+        '<div class="ec-trust__badge">',
+          '<span class="ec-trust__icon">' + esc(b.icon || "") + '</span>',
+          '<span class="ec-trust__text">' + esc(b.text || "") + '</span>',
+        '</div>',
+      ].join("");
+    }).join("");
+    return '<div class="ec-trust">' + items + '</div>';
+  }
 
-    if (unlocked && !freebieItem) {
-      /* Respect cooldown period after a failed add */
-      if (Date.now() < freebieRetryAt) return;
+  /* ── Cart Share Link HTML ───────────────────────────────── */
+  function buildCartShareHTML() {
+    return [
+      '<div class="ec-cart-share">',
+        '<button class="ec-cart-share__btn" id="ec-cart-share-btn">',
+          '🔗 ' + esc(settings.cartShareText || "Share your cart"),
+        '</button>',
+      '</div>',
+    ].join("");
+  }
 
-      freebieAutoSync = true;
-      cartAdd(numId, 1, { _edge_cart_freebie: "true" })
-        .then(function () {
-          freebieAutoSync = false;
-          freebieRetryAt  = 0;
-          showFreebieToast();
-          syncFreebie();
-          if (isOpen) render();
-          syncCartBadges();
-        })
-        .catch(function (err) {
-          freebieAutoSync = false;
-          freebieRetryAt  = 0; /* retry immediately on next sync */
-          console.warn("[EdgeCart] Freebie auto-add failed:", err.message || err);
-          /* Don't re-render — no UI change needed */
-        });
+  /* ── Recently Viewed HTML (empty cart) ─────────────────── */
+  function buildRecentlyViewedHTML() {
+    var rv = [];
+    try { rv = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
+    var limit = Math.min(Math.max(parseInt(settings.recentlyViewedLimit) || 4, 2), 6);
+    var toShow = rv.slice(0, limit);
+    if (!toShow.length) return "";
+    var cards = toShow.map(function (p) {
+      var priceHtml = p.price ? '<p class="ec-rv-card__price">' + moneyVal(p.price) + '</p>' : '';
+      var imgHtml = p.imageUrl
+        ? '<div class="ec-rv-card__img-wrap"><img class="ec-rv-card__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy" onerror="this.parentNode.innerHTML=\'<div class=\\\"ec-rv-card__img-placeholder\\\"></div>\'"></div>'
+        : '<div class="ec-rv-card__img-wrap"><div class="ec-rv-card__img-placeholder"></div></div>';
+      return [
+        '<a class="ec-rv-card" href="' + esc(p.url || ("/products/" + p.handle)) + '">',
+          imgHtml,
+          '<div class="ec-rv-card__body">',
+            '<p class="ec-rv-card__name">' + esc(p.title) + '</p>',
+            priceHtml,
+          '</div>',
+        '</a>',
+      ].join("");
+    }).join("");
+    return [
+      '<div class="ec-empty-rv">',
+        /* Empty cart message */
+        '<div class="ec-empty-rv__top">',
+          svgCart("ec-empty__icon"),
+          '<p class="ec-empty__text">Your cart is empty</p>',
+          '<p class="ec-empty__sub">Explore products you recently viewed</p>',
+        '</div>',
+        /* Recently viewed grid */
+        '<div class="ec-rv">',
+          '<p class="ec-rv__title">' + esc(settings.recentlyViewedTitle || "Recently Viewed") + '</p>',
+          '<div class="ec-rv__grid">' + cards + '</div>',
+        '</div>',
+      '</div>',
+    ].join("");
+  }
 
-    } else if (!unlocked && freebieItem) {
-      freebieAutoSync = true;
-      cartChange(freebieItem.key, 0)
-        .then(function () {
-          freebieAutoSync = false;
-          freebieRetryAt  = 0;
-          syncFreebie();
-          if (isOpen) render();
-          syncCartBadges();
-        })
-        .catch(function (err) {
-          freebieAutoSync = false;
-          console.warn("[EdgeCart] Freebie auto-remove failed:", err.message || err);
-        });
+  /* ── Track recently viewed products ─────────────────────── */
+  function trackRecentlyViewed() {
+    if (!settings || !settings.recentlyViewedEnabled) return;
+    if (window.location.pathname.indexOf("/products/") === -1) return;
+
+    /* Handle from URL — most reliable */
+    var pathParts = window.location.pathname.split("/products/");
+    var handle = pathParts[1] ? pathParts[1].split("/")[0].split("?")[0] : "";
+    if (!handle) return;
+
+    /* Meta for title/price */
+    var meta = (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product)
+      || (window.meta && window.meta.product) || {};
+
+    /* Try DOM for image first — fastest, no extra request */
+    var imgUrl = "";
+    var imgEl = document.querySelector(
+      ".product__media img, .product-single__photo img, .product-featured-img, " +
+      ".product__photo img, [data-product-featured-image], .product-gallery__image img, " +
+      ".product-image img, .product__image img, .product-media img, " +
+      ".product-single__media img, [class*='product'] img[src*='cdn.shopify']"
+    );
+    if (imgEl && imgEl.src && imgEl.src.indexOf("data:") === -1) {
+      imgUrl = imgEl.src.replace(/(_\d+x[\d]*)(\.[a-z]+)(\?|$)/gi, "$2$3")
+                        .replace(/\?.*$/, "") + "?width=300";
     }
+
+    var entry = {
+      handle:   handle,
+      title:    meta.title || (document.querySelector("h1") || {}).textContent || handle,
+      imageUrl: imgUrl,
+      price:    meta.price || (meta.variants && meta.variants[0] && meta.variants[0].price) || 0,
+      url:      window.location.pathname,
+    };
+
+    var rv = [];
+    try { rv = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
+    rv = rv.filter(function (p) { return p.handle !== handle; });
+    rv.unshift(entry);
+    if (rv.length > 10) rv = rv.slice(0, 10);
+    try { localStorage.setItem("ec_rv", JSON.stringify(rv)); } catch (_) {}
+
+    /* Fetch product JSON in background to fill in missing image/price */
+    if (!imgUrl || !entry.price) {
+      fetch("/products/" + handle + ".js", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data) return;
+          var saved = [];
+          try { saved = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
+          for (var i = 0; i < saved.length; i++) {
+            if (saved[i].handle !== handle) continue;
+            if (!saved[i].imageUrl && data.featured_image) {
+              saved[i].imageUrl = data.featured_image.replace(/\?.*$/, "") + "?width=300";
+            }
+            if (!saved[i].price && data.variants && data.variants[0]) {
+              saved[i].price = data.variants[0].price;
+            }
+            if (data.title) saved[i].title = data.title;
+            break;
+          }
+          try { localStorage.setItem("ec_rv", JSON.stringify(saved)); } catch (_) {}
+        })
+        .catch(function () {});
+    }
+  }
+
+  /* ── Fetch inventory for stock scarcity ─────────────────── */
+  function fetchInventoryForItems() {
+    if (!cart || !settings || !settings.stockScarcityEnabled) return;
+    var fetched = false;
+    cart.items.forEach(function (item) {
+      if (isFreebieItem(item)) return;
+      if (inventoryCache[item.variant_id] !== undefined) return;
+      if (!item.handle) return;
+      fetched = true;
+      fetch("/products/" + item.handle + ".js", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !data.variants) return;
+          data.variants.forEach(function (v) {
+            inventoryCache[v.id] = v.inventory_management ? v.inventory_quantity : null;
+          });
+          if (isOpen) renderBody();
+        })
+        .catch(function () {});
+    });
+    return fetched;
+  }
+
+  /* ── Sticky Add-to-Cart ──────────────────────────────────── */
+  function initStickyAtc() {
+    if (!settings || !settings.stickyAtcEnabled) return;
+    if (window.location.pathname.indexOf("/products/") === -1) return;
+
+    var stickyBar = document.createElement("div");
+    stickyBar.id = "ec-sticky-atc";
+    stickyBar.className = "ec-sticky-atc";
+    stickyBar.innerHTML = [
+      '<div class="ec-sticky-atc__inner">',
+        '<span class="ec-sticky-atc__title" id="ec-sticky-title"></span>',
+        '<button class="ec-sticky-atc__btn" id="ec-sticky-btn">' + esc(settings.stickyAtcText || "Add to Cart") + '</button>',
+      '</div>',
+    ].join("");
+    document.body.appendChild(stickyBar);
+
+    var productTitle = document.querySelector("h1.product__title, h1.product-single__title, h1[class*='product']");
+    var titleEl = document.getElementById("ec-sticky-title");
+    if (titleEl && productTitle) titleEl.textContent = productTitle.textContent.trim();
+
+    var nativeBtn = document.querySelector('[name="add"], button[type="submit"][data-add-to-cart], .product-form__submit');
+    if (!nativeBtn) return;
+
+    var observer = new IntersectionObserver(function (entries) {
+      var visible = entries[0] && entries[0].isIntersecting;
+      stickyBar.classList.toggle("ec-sticky-atc--visible", !visible);
+    }, { threshold: 0.1 });
+    observer.observe(nativeBtn);
+
+    var stickyBtn = document.getElementById("ec-sticky-btn");
+    if (stickyBtn) {
+      stickyBtn.addEventListener("click", function () {
+        var form = nativeBtn.closest("form[action*='/cart/add']") || document.querySelector("form[action*='/cart/add']");
+        if (form) {
+          var fd = new FormData(form);
+          var vid = fd.get("id");
+          var qty = parseInt(fd.get("quantity") || "1", 10);
+          if (vid) {
+            stickyBtn.disabled = true;
+            stickyBtn.textContent = "Adding…";
+            cartAdd(vid, qty, {})
+              .then(function (item) { handlePostAdd(item, true); })
+              .catch(function () { form.submit(); })
+              .finally(function () {
+                stickyBtn.disabled = false;
+                stickyBtn.textContent = settings.stickyAtcText || "Add to Cart";
+              });
+            return;
+          }
+        }
+        nativeBtn.click();
+      });
+    }
+  }
+
+  /* ── One-Click Upsell HTML ──────────────────────────────── */
+  function buildOcuHTML(checked) {
+    var price = settings.ocuProductPrice ? ' · ' + money(settings.ocuProductPrice) : '';
+    var heading = settings.ocuHeading || 'Complete your order';
+    return [
+      '<div class="ec-ocu" id="ec-ocu">',
+        '<p class="ec-ocu__heading">' + esc(heading) + '</p>',
+        '<label class="ec-ocu__label">',
+          '<input class="ec-ocu__check" id="ec-ocu-check" type="checkbox"' + (checked ? ' checked' : '') + '>',
+          settings.ocuProductImageUrl
+            ? '<img class="ec-ocu__img" src="' + esc(settings.ocuProductImageUrl) + '" alt="" loading="lazy">'
+            : '',
+          '<div class="ec-ocu__info">',
+            '<span class="ec-ocu__add-label">' + esc(settings.ocuLabel || 'Add to your order') + '</span>',
+            settings.ocuProductTitle
+              ? '<span class="ec-ocu__name">' + esc(settings.ocuProductTitle) + price + '</span>'
+              : '',
+          '</div>',
+        '</label>',
+      '</div>',
+    ].join('');
   }
 
   /* ── Upsell HTML — horizontal scroll carousel ──────────── */
@@ -798,8 +1508,12 @@
     var cards = toShow.map(function (p) {
       var v   = p.variants && p.variants[0];
       if (!v) return "";
-      var vid   = extractId(v.id);
-      var price = v.price ? moneyVal(parseFloat(v.price) * 100) : "";
+      var vid      = extractId(v.id);
+      var price    = v.price ? moneyDollars(v.price) : "";
+      var compare  = v.compareAtPrice && parseFloat(v.compareAtPrice) > parseFloat(v.price) ? moneyDollars(v.compareAtPrice) : "";
+      var priceHTML = compare
+        ? '<p class="ec-upsell-card__price"><s>' + compare + '</s> ' + price + '</p>'
+        : (price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "");
       var img   = p.featuredImage && p.featuredImage.url ? p.featuredImage.url : "";
       return [
         '<div class="ec-upsell-card">',
@@ -808,9 +1522,9 @@
             : '<div class="ec-upsell-card__img-placeholder"></div>',
           '<div class="ec-upsell-card__body">',
             '<p class="ec-upsell-card__name">' + esc(p.title) + '</p>',
-            price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "",
+            priceHTML,
+            '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(vid) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
           '</div>',
-          '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(vid) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
         '</div>',
       ].join("");
     }).join("");
@@ -831,10 +1545,9 @@
     if (aiRecommendationsFetching) return;
 
     /* Seed: non-freebie item with highest line price */
-    var freebieId = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
     var seed = null;
     cart.items.forEach(function (item) {
-      if (freebieId && String(item.variant_id) === freebieId) return;
+      if (getFreebieOffer(item)) return;
       if (!seed || item.line_price > seed.line_price) seed = item;
     });
     if (!seed) { aiRecommendations = []; return; }
@@ -875,10 +1588,15 @@
     var cards = toShow.map(function (p) {
       var v = p.variants && p.variants[0];
       if (!v) return "";
-      /* Recommendations API returns featured_image as a string URL */
-      var img   = (typeof p.featured_image === "string" ? p.featured_image : "")
-               || (p.images && p.images[0] && p.images[0].src) || "";
-      var price = v.price ? moneyVal(parseFloat(v.price) * 100) : "";
+      /* Recommendations API returns featured_image as a string URL.
+         Prices are integers in cents (same as /cart.js) — use moneyVal directly. */
+      var img      = (typeof p.featured_image === "string" ? p.featured_image : "")
+                  || (p.images && p.images[0] && p.images[0].src) || "";
+      var price    = v.price ? moneyVal(v.price) : "";
+      var compare  = v.compare_at_price && v.compare_at_price > v.price ? moneyVal(v.compare_at_price) : "";
+      var priceHTML = compare
+        ? '<p class="ec-upsell-card__price"><s>' + compare + '</s> ' + price + '</p>'
+        : (price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "");
       return [
         '<div class="ec-upsell-card">',
           img
@@ -886,9 +1604,9 @@
             : '<div class="ec-upsell-card__img-placeholder"></div>',
           '<div class="ec-upsell-card__body">',
             '<p class="ec-upsell-card__name">' + esc(p.title) + '</p>',
-            price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "",
+            priceHTML,
+            '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(String(v.id)) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
           '</div>',
-          '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(String(v.id)) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
         '</div>',
       ].join("");
     }).join("");
@@ -907,43 +1625,55 @@
   /* ===========================================================
      THRESHOLD CHECKS
   =========================================================== */
-  function checkFreebie() {
-    if (!cart) return false;
-    var t   = settings.freebieTriggerType;
-    var fid = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
+  function checkOffer(offer) {
+    if (!cart || !offer || !offer.enabled) return false;
+    var fid = offer.productVariantId ? extractId(offer.productVariantId) : null;
+    var t   = offer.triggerType;
 
-    if (t === "cartValue") {
-      var realTotal = cart.items.reduce(function (sum, i) {
-        return String(i.variant_id) === fid ? sum : sum + i.line_price;
-      }, 0);
-      return (realTotal / 100) >= settings.freebieMinCartValue;
-    }
-    if (t === "quantity") {
-      var realQty = cart.items.reduce(function (sum, i) {
-        return String(i.variant_id) === fid ? sum : sum + i.quantity;
-      }, 0);
-      return realQty >= settings.freebieMinQuantity;
-    }
-    if (t === "product") {
-      var ids = (settings.freebieTriggerProductIds || []).map(extractId);
+    var productIds = (offer.triggerProductIds || []).map(function (p) {
+      return extractId(typeof p === "object" ? p.id : p);
+    });
+    var hasProductCond = productIds.length > 0;
+
+    function productMet() {
       return cart.items.some(function (i) {
-        return String(i.variant_id) !== fid && ids.indexOf(String(i.product_id)) !== -1;
+        return String(i.variant_id) !== fid && productIds.indexOf(String(i.product_id)) !== -1;
       });
     }
-    return false;
+
+    if (t === "product") return productMet();
+
+    var primaryMet = false;
+    if (t === "cartValue") {
+      var total = cart.total_price / 100;
+      primaryMet = total >= offer.minCartValue &&
+                   (!offer.maxCartValue || total <= offer.maxCartValue);
+    } else if (t === "quantity") {
+      var qty = cart.items.reduce(function (sum, i) {
+        return String(i.variant_id) === fid ? sum : sum + i.quantity;
+      }, 0);
+      primaryMet = qty >= offer.minQuantity &&
+                   (!offer.maxQuantity || qty <= offer.maxQuantity);
+    }
+
+    if (!hasProductCond) return primaryMet;
+
+    var logic = offer.conditionLogic || "AND";
+    return logic === "OR" ? primaryMet || productMet() : primaryMet && productMet();
   }
 
-  function freebieProgress() {
-    if (!cart) return null;
-    var t = settings.freebieTriggerType;
-    var fid = settings.freebieProductVariantId ? extractId(settings.freebieProductVariantId) : null;
+  function offerProgress(offer) {
+    if (!cart || !offer) return null;
+    var fid = offer.productVariantId ? extractId(offer.productVariantId) : null;
+    var t   = offer.triggerType;
 
     if (t === "cartValue") {
-      var cur    = cart.items.reduce(function (sum, i) {
-        return String(i.variant_id) === fid ? sum : sum + i.line_price;
-      }, 0) / 100;
-      var target = settings.freebieMinCartValue;
-      var rem    = Math.max(0, target - cur);
+      var cur    = cart.total_price / 100;
+      var target = offer.minCartValue;
+      var max    = offer.maxCartValue;
+      /* Max exceeded — handled by syncMaxExceeded() toast, not inline text */
+      if (max && cur > max) return null;
+      var rem = Math.max(0, target - cur);
       return {
         pct: Math.min(100, Math.round((cur / target) * 100)),
         msg: rem > 0 ? "Spend " + moneyVal(rem * 100) + " more to unlock your free gift!" : "",
@@ -953,8 +1683,11 @@
       var curQ    = cart.items.reduce(function (sum, i) {
         return String(i.variant_id) === fid ? sum : sum + i.quantity;
       }, 0);
-      var targetQ = settings.freebieMinQuantity;
-      var remQ    = Math.max(0, targetQ - curQ);
+      var targetQ = offer.minQuantity;
+      var maxQ    = offer.maxQuantity;
+      /* Max exceeded — handled by syncMaxExceeded() toast, not inline text */
+      if (maxQ && curQ > maxQ) return null;
+      var remQ = Math.max(0, targetQ - curQ);
       return {
         pct: Math.min(100, Math.round((curQ / targetQ) * 100)),
         msg: remQ > 0 ? "Add " + remQ + " more item" + (remQ !== 1 ? "s" : "") + " to unlock your free gift!" : "",
@@ -969,7 +1702,9 @@
     if (t === "cartValue")  return (cart.total_price / 100) >= settings.upsellMinCartValue;
     if (t === "quantity")   return cart.item_count >= settings.upsellMinQuantity;
     if (t === "product") {
-      var ids = (settings.upsellTriggerProductIds || []).map(extractId);
+      var ids = (settings.upsellTriggerProductIds || []).map(function (p) {
+        return extractId(typeof p === "object" ? p.id : p);
+      });
       return cart.items.some(function (i) { return ids.indexOf(String(i.product_id)) !== -1; });
     }
     return false;
@@ -982,6 +1717,7 @@
     if (!initialized) return;
     render();
     isOpen = true;
+    track("cart_open");
     /* Re-sync freebie state whenever cart opens */
     syncFreebie();
     var drawer  = id("ec-cart");
@@ -1006,6 +1742,145 @@
   }
 
   /* ===========================================================
+     THEME CART ICON REPLACEMENT
+     Hides the theme's native cart icon and injects our own
+     fancy button in its place, complete with a live item badge.
+  =========================================================== */
+  function replaceThemeCartIcon() {
+    /* Theme name → CSS selector for that theme's cart icon button/link.
+       All three (Horizon, Tinker, Savor) share the same class. */
+    var THEME_MAP = {
+      "horizon": ".header-actions__cart-icon",
+      "tinker":  ".header-actions__cart-icon",
+      "savor":   ".header-actions__cart-icon",
+      "dawn":    "#cart-icon-bubble",
+      "sense":   "#cart-icon-bubble",
+      "craft":   ".header__cart",
+      "studio":  ".header__cart",
+      "spotlight": ".header__cart",
+      "refresh": ".cart__icon",
+      "crave":   ".js-cart-open",
+      "origin":  ".header__cart-toggle",
+      "impulse": ".site-header__cart",
+      "turbo":   ".site-header__cart",
+    };
+
+    var themeName = (window.Shopify && window.Shopify.theme && window.Shopify.theme.name)
+      ? window.Shopify.theme.name.toLowerCase().trim()
+      : "";
+
+    /* Priority: 1. merchant custom, 2. built-in map, 3. broad fallbacks */
+    var selector = (settings.customCartIconSelector && settings.customCartIconSelector.trim())
+      || THEME_MAP[themeName]
+      || null;
+
+    var original = selector ? document.querySelector(selector) : null;
+
+    /* Broad fallback chain if nothing matched yet */
+    if (!original) {
+      var fallbacks = [
+        ".header-actions__cart-icon",
+        "#cart-icon-bubble",
+        ".header__cart",
+        ".cart-link",
+        ".site-header__cart",
+        "[data-cart-toggle]",
+      ];
+      for (var fi = 0; fi < fallbacks.length; fi++) {
+        original = document.querySelector(fallbacks[fi]);
+        if (original && !original.closest("#ec-cart")) break;
+        original = null;
+      }
+    }
+
+    if (!original || original.id === "ec-cart-trigger") return;
+
+    /* Walk UP to the real clickable ancestor (button or link) that the theme
+       attaches its click handler to. This is the element we must hide — hiding
+       only the inner icon leaves the outer button active and also causes our
+       injected button to be nested inside the theme's button (invalid HTML). */
+    var hideTarget = original.closest("button, a[href]") || original;
+
+    /* Safety: never hide something that is (or contains) our own drawer */
+    if (hideTarget.closest("#ec-cart")) return;
+
+    /* Build our button */
+    var btn = document.createElement("button");
+    btn.id        = "ec-cart-trigger";
+    btn.className = "ec-cart-trigger";
+    btn.setAttribute("type", "button");
+    btn.setAttribute("aria-label", "Open cart");
+    btn.innerHTML = svgCartBag() + '<span class="ec-cart-trigger__badge" id="ec-trigger-badge"></span>';
+
+    btn.addEventListener("click", function () {
+      loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
+    });
+
+    function applyHide() {
+      hideTarget.style.setProperty("display", "none", "important");
+    }
+
+    function ensureButton() {
+      if (!document.getElementById("ec-cart-trigger")) {
+        if (hideTarget.parentNode) {
+          hideTarget.parentNode.insertBefore(btn, hideTarget.nextSibling);
+        }
+      }
+    }
+
+    applyHide();
+
+    /* Insert as SIBLING of the hidden target — not inside it */
+    hideTarget.parentNode.insertBefore(btn, hideTarget.nextSibling);
+
+    /* Watch for the theme's JS resetting display or removing our button.
+       Themes often re-init their header after page load, wiping inline styles. */
+    var obs = new MutationObserver(function () {
+      /* Re-apply hide if theme cleared our inline display:none */
+      if (hideTarget.style.display !== "none") applyHide();
+      /* Re-insert our button if theme rebuilt the DOM and removed it */
+      ensureButton();
+    });
+
+    /* Observe style/class changes on the hidden element */
+    obs.observe(hideTarget, { attributes: true, attributeFilter: ["style", "class"] });
+
+    /* Observe the parent container for child list mutations (node removed/re-added) */
+    var parent = hideTarget.parentNode;
+    if (parent) obs.observe(parent, { childList: true });
+
+    /* Sync badge immediately if cart is already loaded */
+    syncCartBadges();
+  }
+
+  /* ===========================================================
+     THEME NATIVE CART SUPPRESSION
+     Disables the built-in cart drawer in Dawn, Horizon, Tinker,
+     Craft, Crave, etc. so EdgeCart is the only cart experience.
+  =========================================================== */
+  function suppressThemeCart() {
+    /* Only intercept custom events that themes dispatch programmatically
+       (e.g. after add-to-cart via fetch). We no longer hide the drawer
+       element itself — that caused flicker because the theme's own JS
+       overrides inline styles. The trigger button is already hidden by
+       replaceThemeCartIcon(), so the drawer can never open via click. */
+    var CART_OPEN_EVENTS = [
+      "cart:open", "cart:show", "cart:toggle",
+      "dispatch:cart-drawer:open", "cartdrawer:open",
+      "cart-drawer:open", "CartDrawer:open",
+      "theme:cart:open", "cart-open",
+    ];
+    CART_OPEN_EVENTS.forEach(function (evName) {
+      [window, document].forEach(function (target) {
+        target.addEventListener(evName, function (e) {
+          e.stopImmediatePropagation();
+          openCart();
+        }, true);
+      });
+    });
+  }
+
+  /* ===========================================================
      EVENT LISTENERS
   =========================================================== */
   function attachGlobalListeners() {
@@ -1018,8 +1893,9 @@
         if (url && url.includes("/cart/add")) {
           promise.then(function (res) {
             if (res && res.ok) {
+              var cloned = res.clone();
               setTimeout(function () {
-                loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
+                cloned.json().then(function (item) { handlePostAdd(item); }).catch(function () { handlePostAdd(null); });
               }, 50);
             }
           }).catch(function () {});
@@ -1040,9 +1916,9 @@
         var xhr = this;
         xhr.addEventListener("load", function () {
           if (xhr.status >= 200 && xhr.status < 300) {
-            setTimeout(function () {
-              loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
-            }, 50);
+            var item = null;
+            try { item = JSON.parse(xhr.responseText); } catch (_) {}
+            setTimeout(function () { handlePostAdd(item); }, 50);
           }
         }, { once: true });
       }
@@ -1066,21 +1942,37 @@
 
       setSubmitBtnLoading(form, true);
       cartAdd(vid, qty, {})
-        .then(function () { render(); openCart(); syncFreebie(); })
+        .then(function (item) { handlePostAdd(item, true); })
         .catch(function () { form.submit(); })
         .finally(function () { setSubmitBtnLoading(form, false); });
     }, true);
 
-    /* Cart icon / /cart link clicks */
+    /* Cart icon / /cart link clicks — capture phase so we run BEFORE theme handlers */
+    var CART_ICON_SEL = [
+      /* Universal */
+      'a[href="/cart"]', 'a[href^="/cart?"]',
+      /* Attribute-based (Dawn, Horizon, Craft) */
+      '[data-cart-toggle]', '[data-action="toggle-cart"]',
+      '[data-open="cart-drawer"]', '[aria-controls="CartDrawer"]',
+      '[aria-controls="cart-drawer"]', '[aria-controls="cart-notification"]',
+      /* Class-based (various themes) */
+      '.cart-link', '.cart-toggle', '.header__cart', '.cart-icon-bubble',
+      '.cart-count-bubble', '.header-cart', '.nav__icon--cart',
+      '.js-cart-open', '.js-mini-cart-toggle', '.site-cart__btn',
+      /* Custom element / ID based */
+      'cart-icon-bubble', '#cart-icon-bubble',
+      /* Tinker-specific */
+      '[data-cart]', '.icon-cart',
+    ].join(", ");
+
     document.addEventListener("click", function (e) {
       if (e.target.closest("#ec-cart")) return;
-      var link = e.target.closest(
-        'a[href="/cart"], a[href^="/cart?"], [data-cart-toggle], .cart-link, .header__cart, .cart-icon-bubble'
-      );
+      var link = e.target.closest(CART_ICON_SEL);
       if (!link) return;
       e.preventDefault();
+      e.stopImmediatePropagation();
       openCart();
-    }, false);
+    }, true); /* capture:true — fires before any theme bubble listener */
 
     /* Escape key */
     document.addEventListener("keydown", function (e) {
@@ -1092,7 +1984,7 @@
       loadCart().then(function (c) { cart = c; if (isOpen) render(); syncFreebie(); });
     });
     document.addEventListener("theme:cart:add", function () {
-      loadCart().then(function (c) { cart = c; render(); openCart(); syncFreebie(); });
+      handlePostAdd(null, false);
     });
     document.addEventListener("cart:refresh", function () {
       loadCart().then(function (c) { cart = c; if (isOpen) render(); syncFreebie(); });
@@ -1126,7 +2018,10 @@
       upsellBtn.textContent = "✓ Added";
       upsellBtn.classList.add("ec-upsell-card__add--done");
       cartAdd(vid, 1, {})
-        .then(function () { render(); syncFreebie(); })
+        .then(function () {
+          track("upsell_add", { variantId: vid, revenue: cart ? cart.total_price : 0 });
+          render(); syncFreebie();
+        })
         .catch(function () {
           upsellBtn.disabled = false;
           upsellBtn.textContent = "+ Add";
@@ -1205,12 +2100,20 @@
 
   function syncCartBadges() {
     var count = (cart && cart.item_count) || 0;
+    /* Update theme's own badge elements */
     document.querySelectorAll(
       "[data-cart-count], .cart-count, #CartCount, .cart-item-count, .header__cart-bubble, .cart-bubble"
     ).forEach(function (el) {
       el.textContent   = count;
       el.style.display = count > 0 ? "" : "none";
     });
+    /* Update our injected trigger badge */
+    var badge = id("ec-trigger-badge");
+    if (badge) {
+      badge.textContent = count > 0 ? (count > 99 ? "99+" : String(count)) : "";
+      if (count > 0) badge.classList.add("ec-cart-trigger__badge--show");
+      else            badge.classList.remove("ec-cart-trigger__badge--show");
+    }
   }
 
   function checkoutUrl() {
@@ -1220,6 +2123,21 @@
   }
 
   function money(cents) { return moneyVal(cents); }
+
+  /* Formats a dollar-string from Shopify's REST API (e.g. "749.95") directly.
+     Avoids the * 100 / 100 round-trip that can introduce floating-point drift. */
+  function moneyDollars(str) {
+    var val = parseFloat(str) || 0;
+    var currency = (window.Shopify && window.Shopify.currency && window.Shopify.currency.active)
+      || (cart && cart.currency) || "USD";
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency", currency: currency, minimumFractionDigits: 2,
+      }).format(val);
+    } catch (_) {
+      return "$" + val.toFixed(2);
+    }
+  }
 
   function moneyVal(cents) {
     var currency = (window.Shopify && window.Shopify.currency && window.Shopify.currency.active)
@@ -1248,6 +2166,7 @@
   }
 
   function id(elId) { return document.getElementById(elId); }
+  function qsa(sel, ctx) { return Array.prototype.slice.call((ctx || document).querySelectorAll(sel)); }
   function make(tag, cls) { var el = document.createElement(tag); if (cls) el.className = cls; return el; }
   function on(el, evt, fn) { if (el) el.addEventListener(evt, fn); }
 
@@ -1255,8 +2174,23 @@
   function svgClose() {
     return '<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M15 5L5 15M5 5l10 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
+  function svgCartBag() {
+    return [
+      '<svg class="ec-cart-trigger__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"',
+        ' fill="none" stroke="currentColor" stroke-width="1.75"',
+        ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+        '<path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/>',
+        '<line x1="3" y1="6" x2="21" y2="6"/>',
+        '<path d="M16 10a4 4 0 01-8 0"/>',
+      '</svg>',
+    ].join("");
+  }
+
   function svgX() {
     return '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11 3L3 11M3 3l8 8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>';
+  }
+  function svgChevron() {
+    return '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
   function svgCart(cls) {
     return '<svg class="' + cls + '" viewBox="0 0 64 64" fill="none" aria-hidden="true"><circle cx="32" cy="32" r="30" stroke="currentColor" stroke-width="2"/><path d="M18 24h28l-3.5 16H21.5L18 24z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M26 24v-4a6 6 0 0112 0v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';

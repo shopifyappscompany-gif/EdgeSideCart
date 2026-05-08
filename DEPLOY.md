@@ -8,7 +8,7 @@
 
 ## Option A — Deploy on Railway (Already Active)
 
-Railway is already configured and working. Use this section when redeploying or setting up a fresh Railway instance.
+Railway is already configured and working. Use this section when redeploying or setting up a fresh Railway instancee.
 
 ### 1. Create PostgreSQL on Railway
 

@@ -6,7 +6,7 @@ embedded = true
 name = "EdgeCart"
 
 [access_scopes]
-scopes = "read_products,write_products,read_discounts"
+scopes = "read_products,write_products,read_discounts,read_publications"
 
 [app_proxy]
 url = "https://edgesidecart.onrender.com"
@@ -33,4 +33,4 @@ redirect_urls = [
 
 [build]
 include_config_on_deploy = true
-automatically_update_urls_on_dev = false
+automatically_update_urls_on_dev = true
