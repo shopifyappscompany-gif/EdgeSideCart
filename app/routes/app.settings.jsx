@@ -509,45 +509,46 @@ export default function GeneralSettings() {
         </s-stack>
       </s-section>
 
-      {/* ── Discount Code ── */}
-      <s-section heading="Discount Code" style={{ display: "none" }}>
-        <s-stack direction="block" gap="base">
-          <ToggleRow
-            label="Show Discount Code Field"
-            desc="Let customers enter a manual discount code. Validated against Shopify and applied at checkout."
-            checked={discountEnabled}
-            onChange={setDiscountEnabled}
-          />
-        </s-stack>
-      </s-section>
+      {/* ── Discount Code — hidden ── */}
+      <div style={{ display: "none" }}>
+        <s-section heading="Discount Code">
+          <s-stack direction="block" gap="base">
+            <ToggleRow
+              label="Show Discount Code Field"
+              desc="Let customers enter a manual discount code. Validated against Shopify and applied at checkout."
+              checked={discountEnabled}
+              onChange={setDiscountEnabled}
+            />
+          </s-stack>
+        </s-section>
 
-      {/* ── Auto-Discount ── */}
-      <s-section heading="Auto-Apply Discount" style={{ display: "none" }}>
-        <s-stack direction="block" gap="base">
-          <ToggleRow
-            label="Enable Auto-Apply Discount"
-            desc="Pre-fill a discount code in the cart so customers just click Apply — no typing required."
-            checked={autoDiscountEnabled}
-            onChange={setAutoDiscountEnabled}
-          />
-          {autoDiscountEnabled && (
-            <div>
-              <label style={labelStyle}>Discount Code</label>
-              <input
-                type="text"
-                value={autoDiscountCode}
-                onChange={e => setAutoDiscountCode(e.target.value.toUpperCase())}
-                style={{ ...inputStyle, textTransform: "uppercase", letterSpacing: 1 }}
-                placeholder="SAVE10"
-              />
-              <p style={helpText}>
-                Must be an active discount code created in Shopify Admin → Discounts.
-                The code will be pre-validated and savings shown automatically.
-              </p>
-            </div>
-          )}
-        </s-stack>
-      </s-section>
+        <s-section heading="Auto-Apply Discount">
+          <s-stack direction="block" gap="base">
+            <ToggleRow
+              label="Enable Auto-Apply Discount"
+              desc="Pre-fill a discount code in the cart so customers just click Apply — no typing required."
+              checked={autoDiscountEnabled}
+              onChange={setAutoDiscountEnabled}
+            />
+            {autoDiscountEnabled && (
+              <div>
+                <label style={labelStyle}>Discount Code</label>
+                <input
+                  type="text"
+                  value={autoDiscountCode}
+                  onChange={e => setAutoDiscountCode(e.target.value.toUpperCase())}
+                  style={{ ...inputStyle, textTransform: "uppercase", letterSpacing: 1 }}
+                  placeholder="SAVE10"
+                />
+                <p style={helpText}>
+                  Must be an active discount code created in Shopify Admin → Discounts.
+                  The code will be pre-validated and savings shown automatically.
+                </p>
+              </div>
+            )}
+          </s-stack>
+        </s-section>
+      </div>
 
       {/* ── Order Notes ── */}
       <s-section heading="Order Notes">
