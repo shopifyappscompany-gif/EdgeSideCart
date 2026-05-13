@@ -704,8 +704,8 @@
     /* AI upsell (Shopify Recommendations API) */
     if (settings.aiUpsellEnabled) html += buildAiUpsellHTML();
 
-    /* Discount */
-    if (settings.discountEnabled) {
+    /* Discount — hidden */
+    if (false && settings.discountEnabled) {
       var isApplied = !!(appliedDiscount && discountCode);
       if (isApplied) {
         var labelText = savings > 0
