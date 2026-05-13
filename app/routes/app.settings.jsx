@@ -510,7 +510,7 @@ export default function GeneralSettings() {
       </s-section>
 
       {/* ── Discount Code ── */}
-      <s-section heading="Discount Code">
+      <s-section heading="Discount Code" style={{ display: "none" }}>
         <s-stack direction="block" gap="base">
           <ToggleRow
             label="Show Discount Code Field"
@@ -522,7 +522,7 @@ export default function GeneralSettings() {
       </s-section>
 
       {/* ── Auto-Discount ── */}
-      <s-section heading="Auto-Apply Discount">
+      <s-section heading="Auto-Apply Discount" style={{ display: "none" }}>
         <s-stack direction="block" gap="base">
           <ToggleRow
             label="Enable Auto-Apply Discount"
