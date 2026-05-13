@@ -298,9 +298,9 @@
 }
 
 /* ----------------------------------------------------------
-   Body (scrollable)
+   Unified scroll area (body + footer scroll together)
    ---------------------------------------------------------- */
-.ec-body {
+.ec-scroll-area {
   flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
@@ -308,9 +308,18 @@
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: #e0e0e0 transparent;
+  display: flex;
+  flex-direction: column;
 }
-.ec-body::-webkit-scrollbar { width: 4px; }
-.ec-body::-webkit-scrollbar-thumb { background: #e0e0e0; border-radius: 4px; }
+.ec-scroll-area::-webkit-scrollbar { width: 4px; }
+.ec-scroll-area::-webkit-scrollbar-thumb { background: #e0e0e0; border-radius: 4px; }
+
+/* ----------------------------------------------------------
+   Body
+   ---------------------------------------------------------- */
+.ec-body {
+  flex-shrink: 0;
+}
 
 /* ----------------------------------------------------------
    Empty State
@@ -562,11 +571,14 @@ a.ec-item__title--link:hover {
    ---------------------------------------------------------- */
 .ec-footer {
   flex-shrink: 0;
-  border-top: 1px solid #f0f0f0;
+}
+
+.ec-checkout-sticky {
+  position: sticky;
+  bottom: 0;
   background: #fff;
-  max-height: 65%;
-  overflow-y: auto;
-  overflow-x: hidden;
+  border-top: 1px solid #f0f0f0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ----------------------------------------------------------
@@ -1597,14 +1609,19 @@ a.ec-item__title--link:hover {
 .ec-empty-rv {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-height: 100%;
 }
 .ec-empty-rv__top {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 36px 20px 20px;
+  padding: 32px 20px 20px;
   border-bottom: 1px solid #f3f4f6;
+}
+.ec-empty-rv__icon {
+  font-size: 44px;
+  margin-bottom: 10px;
+  line-height: 1;
 }
 .ec-rv {
   padding: 20px 16px 24px;

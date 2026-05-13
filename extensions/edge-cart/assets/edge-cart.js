@@ -307,8 +307,10 @@
         '<div class="ec-banner" id="ec-banner"></div>',
         '<div class="ec-scarcity" id="ec-scarcity" style="display:none"></div>',
         '<div class="ec-rewards" id="ec-rewards" style="display:none"></div>',
-        '<div class="ec-body" id="ec-body"></div>',
-        '<div class="ec-footer" id="ec-footer"></div>',
+        '<div class="ec-scroll-area" id="ec-scroll-area">',
+          '<div class="ec-body" id="ec-body"></div>',
+          '<div class="ec-footer" id="ec-footer"></div>',
+        '</div>',
       '</div>',
     ].join("");
 
@@ -816,17 +818,16 @@
     /* Cart share link */
     if (settings.cartShareEnabled) html += buildCartShareHTML();
 
-    html += [
+    var stickyHtml = '<div class="ec-checkout-sticky">';
+    stickyHtml += [
       '<button class="ec-checkout-btn" id="ec-checkout">',
         'Checkout · ' + money(finalTotal),
       '</button>',
     ].join("");
-
-    /* Express checkout */
-    if (settings.expressCheckoutEnabled) html += buildExpressCheckoutHTML();
-
-    /* Trust badges */
-    if (settings.trustBadgesEnabled) html += buildTrustBadgesHTML();
+    if (settings.expressCheckoutEnabled) stickyHtml += buildExpressCheckoutHTML();
+    if (settings.trustBadgesEnabled) stickyHtml += buildTrustBadgesHTML();
+    stickyHtml += '</div>';
+    html += stickyHtml;
 
     footer.innerHTML = html;
 
@@ -1294,38 +1295,35 @@
     var rv = [];
     try { rv = JSON.parse(localStorage.getItem("ec_rv") || "[]"); } catch (_) {}
     var limit = Math.min(Math.max(parseInt(settings.recentlyViewedLimit) || 4, 2), 6);
-    var toShow = rv.slice(0, limit);
+    var toShow = rv.filter(function(p) {
+      return p && p.title && (p.handle || p.url);
+    }).slice(0, limit);
     if (!toShow.length) return "";
     var cards = toShow.map(function (p) {
       var priceHtml = p.price ? '<p class="ec-rv-card__price">' + moneyVal(p.price) + '</p>' : '';
+      var href = p.url || ("/products/" + p.handle);
       var imgHtml = p.imageUrl
-        ? '<div class="ec-rv-card__img-wrap"><img class="ec-rv-card__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy" onerror="this.parentNode.innerHTML=\'<div class=\\\"ec-rv-card__img-placeholder\\\"></div>\'"></div>'
+        ? '<div class="ec-rv-card__img-wrap"><img class="ec-rv-card__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy"></div>'
         : '<div class="ec-rv-card__img-wrap"><div class="ec-rv-card__img-placeholder"></div></div>';
-      return [
-        '<a class="ec-rv-card" href="' + esc(p.url || ("/products/" + p.handle)) + '">',
-          imgHtml,
-          '<div class="ec-rv-card__body">',
-            '<p class="ec-rv-card__name">' + esc(p.title) + '</p>',
-            priceHtml,
-          '</div>',
-        '</a>',
-      ].join("");
+      return '<a class="ec-rv-card" href="' + esc(href) + '">'
+        + imgHtml
+        + '<div class="ec-rv-card__body">'
+        + '<p class="ec-rv-card__name">' + esc(p.title) + '</p>'
+        + priceHtml
+        + '</div>'
+        + '</a>';
     }).join("");
-    return [
-      '<div class="ec-empty-rv">',
-        /* Empty cart message */
-        '<div class="ec-empty-rv__top">',
-          svgCart("ec-empty__icon"),
-          '<p class="ec-empty__text">Your cart is empty</p>',
-          '<p class="ec-empty__sub">Explore products you recently viewed</p>',
-        '</div>',
-        /* Recently viewed grid */
-        '<div class="ec-rv">',
-          '<p class="ec-rv__title">' + esc(settings.recentlyViewedTitle || "Recently Viewed") + '</p>',
-          '<div class="ec-rv__grid">' + cards + '</div>',
-        '</div>',
-      '</div>',
-    ].join("");
+    return '<div class="ec-empty-rv">'
+      + '<div class="ec-empty-rv__top">'
+      + '<div class="ec-empty-rv__icon">🛒</div>'
+      + '<p class="ec-empty__text">Your cart is empty</p>'
+      + '<p class="ec-empty__sub">Here\'s what you were looking at</p>'
+      + '</div>'
+      + '<div class="ec-rv">'
+      + '<p class="ec-rv__title">' + esc(settings.recentlyViewedTitle || "Recently Viewed") + '</p>'
+      + '<div class="ec-rv__grid">' + cards + '</div>'
+      + '</div>'
+      + '</div>';
   }
 
   /* ── Track recently viewed products ─────────────────────── */
