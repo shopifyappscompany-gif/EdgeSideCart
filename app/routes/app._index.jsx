@@ -7,6 +7,10 @@ export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const settings = await prisma.cartSettings.findUnique({ where: { shop } });
+  const totalEvents = settings ? await prisma.cartEvent.count({ where: { shop } }) : 0;
+  const upsellProducts = (() => { try { return JSON.parse(settings?.upsellProducts || "[]"); } catch { return []; } })();
+  const freebieOffers  = (() => { try { return JSON.parse(settings?.freebieOffers  || "[]"); } catch { return []; } })();
+
   return {
     shop,
     enabled: settings?.enabled ?? true,
@@ -16,6 +20,11 @@ export const loader = async ({ request }) => {
     discountEnabled: settings?.discountEnabled ?? true,
     tieredRewardsEnabled: settings?.tieredRewardsEnabled ?? false,
     planName: settings?.planName ?? "starter",
+    hasSettings: !!settings,
+    hasUpsellProducts: upsellProducts.length > 0,
+    hasFreebieOffer: freebieOffers.length > 0 || !!settings?.freebieProductVariantId,
+    hasBanner: !!(settings?.bannerEnabled && settings?.bannerText),
+    totalEvents,
   };
 };
 
@@ -175,6 +184,16 @@ export default function Dashboard() {
   const data = useLoaderData();
   const navigate = useNavigate();
 
+  const checklist = [
+    { done: data.enabled,           label: "Side cart is enabled",            href: "/app/settings",  hint: "Turn on the cart drawer in Cart Drawer settings." },
+    { done: data.hasBanner,         label: "Announcement banner configured",  href: "/app/settings",  hint: "Add a promotional text to the cart banner." },
+    { done: data.hasUpsellProducts, label: "Upsell products added",           href: "/app/upsell",    hint: "Pick products to show as upsells inside the cart." },
+    { done: data.hasFreebieOffer,   label: "Free gift offer configured",      href: "/app/freebie",   hint: "Set up a free gift reward for customers who hit a threshold." },
+    { done: data.totalEvents > 0,   label: "First cart open recorded",        href: null,             hint: "Enable the app embed in Themes → Customize → App Embeds." },
+    { done: data.planName !== "starter", label: "Plan upgraded", href: "/app/billing", hint: "Upgrade to Growth or Enterprise to unlock AI upsell, analytics, and more." },
+  ];
+  const completedCount = checklist.filter(c => c.done).length;
+
   const planLabels = { starter: "Starter — Free", growth: "Growth — $7/mo", enterprise: "Enterprise — $25/mo" };
   const planColors = { starter: "#475569", growth: "#2563eb", enterprise: "#7c3aed" };
   const planKey = data.planName || "starter";
@@ -267,6 +286,45 @@ export default function Dashboard() {
               <h3 style={s.featureTitle}>{f.title}</h3>
               <p style={s.featureDesc}>{f.desc}</p>
               <span style={s.featureLink}>{f.cta}</span>
+            </div>
+          ))}
+        </div>
+      </s-section>
+
+      {/* Onboarding Checklist */}
+      <s-section heading={`Setup Checklist — ${completedCount}/${checklist.length} complete`}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {checklist.map((item, i) => (
+            <div
+              key={i}
+              role={item.href ? "button" : undefined}
+              tabIndex={item.href ? 0 : undefined}
+              onClick={() => item.href && navigate(item.href)}
+              onKeyDown={(e) => e.key === "Enter" && item.href && navigate(item.href)}
+              style={{
+                display: "flex", alignItems: "center", gap: 14,
+                padding: "13px 16px",
+                border: "1px solid",
+                borderColor: item.done ? "#bbf7d0" : "#e5e7eb",
+                borderRadius: 10,
+                background: item.done ? "#f0fdf4" : "#fff",
+                cursor: item.href ? "pointer" : "default",
+              }}
+            >
+              <div style={{
+                width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
+                background: item.done ? "#22c55e" : "#f3f4f6",
+                border: item.done ? "none" : "1.5px solid #d1d5db",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13, color: item.done ? "#fff" : "#9ca3af", fontWeight: 700,
+              }}>
+                {item.done ? "✓" : (i + 1)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: item.done ? "#166534" : "#111827", textDecoration: item.done ? "line-through" : "none" }}>{item.label}</p>
+                {!item.done && <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{item.hint}</p>}
+              </div>
+              {item.href && !item.done && <span style={{ fontSize: 13, color: "#9ca3af" }}>→</span>}
             </div>
           ))}
         </div>

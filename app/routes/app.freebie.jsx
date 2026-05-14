@@ -145,11 +145,12 @@ export const action = async ({ request }) => {
     }
   }
 
+  const freebieShowAtTop = form.get("freebieShowAtTop") === "true";
   try {
     await prisma.cartSettings.upsert({
       where: { shop },
-      create: { shop, freebieOffers: JSON.stringify(offers) },
-      update: { freebieOffers: JSON.stringify(offers) },
+      create: { shop, freebieOffers: JSON.stringify(offers), freebieShowAtTop },
+      update: { freebieOffers: JSON.stringify(offers), freebieShowAtTop },
     });
   } catch (err) {
     return { error: "Save failed: " + (err?.message || "please try again") };
@@ -215,13 +216,14 @@ export default function FreebieSettings() {
   const [offers, setOffers] = useState(() => initOffers(s));
   const [expandedId, setExpandedId] = useState(null);
   const [creatingForId, setCreatingForId] = useState(null);
+  const [freebieShowAtTop, setFreebieShowAtTop] = useState(s.freebieShowAtTop ?? false);
 
-  const savedSnap = useRef(JSON.stringify(offers));
+  const savedSnap = useRef(JSON.stringify({ offers: initOffers(s), freebieShowAtTop: s.freebieShowAtTop ?? false }));
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    setIsDirty(JSON.stringify(offers) !== savedSnap.current);
-  }, [offers]);
+    setIsDirty(JSON.stringify({ offers, freebieShowAtTop }) !== savedSnap.current);
+  }, [offers, freebieShowAtTop]);
 
   /* NOTE: no useEffect resetting offers on settings change — that would wipe
      newly-added offers whenever any fetcher action triggers loader revalidation. */
@@ -267,7 +269,7 @@ export default function FreebieSettings() {
   function removeOffer(id) {
     const updated = offers.filter((o) => o.id !== id);
     setOffers(updated);
-    fetcher.submit({ freebieOffers: JSON.stringify(updated) }, { method: "POST" });
+    fetcher.submit({ freebieOffers: JSON.stringify(updated), freebieShowAtTop: String(freebieShowAtTop) }, { method: "POST" });
   }
 
   function updateOffer(id, changes) {
@@ -310,12 +312,31 @@ export default function FreebieSettings() {
   }
 
   function handleSave() {
-    fetcher.submit({ freebieOffers: JSON.stringify(offers) }, { method: "POST" });
+    fetcher.submit({ freebieOffers: JSON.stringify(offers), freebieShowAtTop: String(freebieShowAtTop) }, { method: "POST" });
   }
 
   return (
     <s-page heading="Free Gift (Freebie) Settings">
       {isDirty && <SaveBar onSave={handleSave} onDiscard={handleDiscard} saving={saving && !creatingForId} />}
+
+      <s-section heading="Display">
+        <s-stack direction="block" gap="base">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <div>
+              <strong style={{ fontSize: 14 }}>Show Free Gift at Top</strong>
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
+                When enabled, the free gift progress bar always appears above the line items instead of below them.
+              </p>
+            </div>
+            <label style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}>
+              <input type="checkbox" checked={freebieShowAtTop} onChange={e => setFreebieShowAtTop(e.target.checked)} style={{ display: "none" }} />
+              <span style={{ display: "inline-flex", width: 44, height: 24, borderRadius: 12, padding: 2, transition: "background 0.2s", alignItems: "center", background: freebieShowAtTop ? "#008060" : "#ccc" }}>
+                <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.25)", transition: "transform 0.2s", display: "block", transform: freebieShowAtTop ? "translateX(20px)" : "translateX(2px)" }} />
+              </span>
+            </label>
+          </div>
+        </s-stack>
+      </s-section>
 
       <s-section heading="Free Gift Offers">
         <s-stack direction="block" gap="base">

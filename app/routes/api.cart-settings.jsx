@@ -52,6 +52,7 @@ const DEFAULT_SETTINGS = {
   freebieMaxQuantity: null,
   freebieConditionLogic: "AND",
   freebieOffers: [],
+  freebieShowAtTop: false,
   blockCartPage: false,
   upsellTriggerCollectionIds: [],
   scrollableItems: true,
@@ -114,6 +115,35 @@ const DEFAULT_SETTINGS = {
 
   cartShareEnabled: false,
   cartShareText: "Share your cart",
+
+  cartRecoveryEnabled: false,
+  cartRecoveryWhatsApp: "",
+  cartRecoveryMessage: "Check out my cart: {{url}}",
+
+  deliveryEstimatorEnabled: false,
+  deliveryMinDays: 3,
+  deliveryMaxDays: 7,
+  deliveryMessage: "Estimated delivery: {{date_range}}",
+  deliveryCutoffHour: 14,
+
+  announcementsEnabled: false,
+  announcements: [],
+  announcementInterval: 4,
+
+  productPageSocialProofEnabled: false,
+  productPageSocialProofText: "🔥 {{count}} people bought this today",
+  productPageSocialProofMin: 5,
+  productPageSocialProofMax: 30,
+  productPageSocialProofInterval: 8,
+
+  productPageScarcityEnabled: false,
+  productPageVolumeTableEnabled: false,
+  productPageFreebieTeaser: false,
+
+  productPageUpsellEnabled: false,
+  productPageUpsellTitle: "Customers Also Bought",
+  productPageUpsellLimit: 3,
+  productPageUpsellProducts: [],
 };
 
 export const loader = async ({ request }) => {
@@ -163,8 +193,11 @@ export const loader = async ({ request }) => {
       upsellTriggerCollectionIds: safeParseJSON(settings.upsellTriggerCollectionIds, []),
       tieredRewards: safeParseJSON(settings.tieredRewards, []),
       freebieOffers: buildFreebieOffers(settings),
+      freebieShowAtTop: settings.freebieShowAtTop ?? false,
       trustBadges: safeParseJSON(settings.trustBadges, DEFAULT_SETTINGS.trustBadges),
       volumeDiscounts: safeParseJSON(settings.volumeDiscounts, []),
+      announcements: safeParseJSON(settings.announcements, []),
+      productPageUpsellProducts: safeParseJSON(settings.productPageUpsellProducts, []),
     };
 
     return new Response(JSON.stringify(payload), {

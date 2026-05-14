@@ -55,6 +55,16 @@ export const action = async ({ request }) => {
 
     cartShareEnabled: form.get("cartShareEnabled") === "true",
     cartShareText:    String(form.get("cartShareText") || "Share your cart"),
+
+    cartRecoveryEnabled:  form.get("cartRecoveryEnabled") === "true",
+    cartRecoveryWhatsApp: String(form.get("cartRecoveryWhatsApp") || ""),
+    cartRecoveryMessage:  String(form.get("cartRecoveryMessage") || "Check out my cart: {{url}}"),
+
+    deliveryEstimatorEnabled: form.get("deliveryEstimatorEnabled") === "true",
+    deliveryMinDays:          parseInt(form.get("deliveryMinDays") || "3", 10),
+    deliveryMaxDays:          parseInt(form.get("deliveryMaxDays") || "7", 10),
+    deliveryMessage:          String(form.get("deliveryMessage") || "Estimated delivery: {{date_range}}"),
+    deliveryCutoffHour:       parseInt(form.get("deliveryCutoffHour") || "14", 10),
   };
 
   await prisma.cartSettings.upsert({
@@ -134,6 +144,16 @@ export default function FeaturesPage() {
   const [cartShareEnabled, setCartShareEnabled] = useState(s.cartShareEnabled ?? false);
   const [cartShareText,    setCartShareText]    = useState(s.cartShareText ?? "Share your cart");
 
+  const [cartRecoveryEnabled,  setCartRecoveryEnabled]  = useState(s.cartRecoveryEnabled ?? false);
+  const [cartRecoveryWhatsApp, setCartRecoveryWhatsApp] = useState(s.cartRecoveryWhatsApp ?? "");
+  const [cartRecoveryMessage,  setCartRecoveryMessage]  = useState(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
+
+  const [deliveryEstimatorEnabled, setDeliveryEstimatorEnabled] = useState(s.deliveryEstimatorEnabled ?? false);
+  const [deliveryMinDays,          setDeliveryMinDays]          = useState(s.deliveryMinDays ?? 3);
+  const [deliveryMaxDays,          setDeliveryMaxDays]          = useState(s.deliveryMaxDays ?? 7);
+  const [deliveryMessage,          setDeliveryMessage]          = useState(s.deliveryMessage ?? "Estimated delivery: {{date_range}}");
+  const [deliveryCutoffHour,       setDeliveryCutoffHour]       = useState(s.deliveryCutoffHour ?? 14);
+
   function snap() {
     return JSON.stringify({
       freeShippingBarEnabled, freeShippingThreshold, freeShippingText, freeShippingUnlockedText,
@@ -145,6 +165,8 @@ export default function FeaturesPage() {
       stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
       recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
       cartShareEnabled, cartShareText,
+      cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+      deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
     });
   }
 
@@ -163,6 +185,8 @@ export default function FeaturesPage() {
     stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
     recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
     cartShareEnabled, cartShareText,
+    cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+    deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
   ]);
 
   useEffect(() => {
@@ -215,6 +239,16 @@ export default function FeaturesPage() {
 
     setCartShareEnabled(s.cartShareEnabled ?? false);
     setCartShareText(s.cartShareText ?? "Share your cart");
+
+    setCartRecoveryEnabled(s.cartRecoveryEnabled ?? false);
+    setCartRecoveryWhatsApp(s.cartRecoveryWhatsApp ?? "");
+    setCartRecoveryMessage(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
+
+    setDeliveryEstimatorEnabled(s.deliveryEstimatorEnabled ?? false);
+    setDeliveryMinDays(s.deliveryMinDays ?? 3);
+    setDeliveryMaxDays(s.deliveryMaxDays ?? 7);
+    setDeliveryMessage(s.deliveryMessage ?? "Estimated delivery: {{date_range}}");
+    setDeliveryCutoffHour(s.deliveryCutoffHour ?? 14);
   }
 
   function handleSubmit(e) {
@@ -260,6 +294,16 @@ export default function FeaturesPage() {
 
         cartShareEnabled: String(cartShareEnabled),
         cartShareText,
+
+        cartRecoveryEnabled:  String(cartRecoveryEnabled),
+        cartRecoveryWhatsApp,
+        cartRecoveryMessage,
+
+        deliveryEstimatorEnabled: String(deliveryEstimatorEnabled),
+        deliveryMinDays:          String(deliveryMinDays),
+        deliveryMaxDays:          String(deliveryMaxDays),
+        deliveryMessage,
+        deliveryCutoffHour:       String(deliveryCutoffHour),
       },
       { method: "POST" }
     );
@@ -705,6 +749,97 @@ export default function FeaturesPage() {
                 style={inputStyle} placeholder="Share your cart" />
               <p style={helpText}>Clicking copies a URL like <code style={codeStyle}>/cart/VARIANT_ID:QTY,...</code> to the clipboard.</p>
             </div>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* 10. Cart Recovery / WhatsApp */}
+      <s-section heading="Cart Recovery & WhatsApp Share">
+        <s-stack direction="block" gap="base">
+          <ToggleRow
+            label="Enable Cart Recovery"
+            desc="Show a WhatsApp share button in the cart so customers can send their cart link to themselves or a friend — great for recovering abandoned carts."
+            checked={cartRecoveryEnabled}
+            onChange={setCartRecoveryEnabled}
+          />
+          {cartRecoveryEnabled && (
+            <>
+              <div>
+                <label style={labelStyle}>WhatsApp Phone Number (optional)</label>
+                <input type="text" value={cartRecoveryWhatsApp}
+                  onChange={e => setCartRecoveryWhatsApp(e.target.value.replace(/[^0-9]/g, ""))}
+                  style={inputStyle} placeholder="919876543210 (country code + number, no +)" />
+                <p style={helpText}>Leave blank to open WhatsApp without a pre-filled recipient (customer fills it in).</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Message Template</label>
+                <input type="text" value={cartRecoveryMessage}
+                  onChange={e => setCartRecoveryMessage(e.target.value)}
+                  style={inputStyle} placeholder="Check out my cart: {{url}}" />
+                <p style={helpText}>Use <code style={codeStyle}>{"{{url}}"}</code> to insert the cart permalink automatically.</p>
+              </div>
+              <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
+                <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#25d366", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 600 }}>
+                  💬 Share on WhatsApp
+                </div>
+              </div>
+            </>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* 11. Delivery Date Estimator */}
+      <s-section heading="Delivery Date Estimator">
+        <s-stack direction="block" gap="base">
+          <ToggleRow
+            label="Enable Delivery Estimator"
+            desc="Show an estimated delivery date range above the checkout button based on today's date and your processing time."
+            checked={deliveryEstimatorEnabled}
+            onChange={setDeliveryEstimatorEnabled}
+          />
+          {deliveryEstimatorEnabled && (
+            <>
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Min Days</label>
+                  <input type="number" value={deliveryMinDays} min="1" max="30"
+                    onChange={e => setDeliveryMinDays(parseInt(e.target.value) || 3)}
+                    style={inputStyle} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Max Days</label>
+                  <input type="number" value={deliveryMaxDays} min="1" max="60"
+                    onChange={e => setDeliveryMaxDays(parseInt(e.target.value) || 7)}
+                    style={inputStyle} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Cutoff Hour (24h)</label>
+                  <input type="number" value={deliveryCutoffHour} min="0" max="23"
+                    onChange={e => setDeliveryCutoffHour(parseInt(e.target.value) || 14)}
+                    style={inputStyle} />
+                  <p style={helpText}>Orders after this hour ship next day.</p>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Message Template</label>
+                <input type="text" value={deliveryMessage}
+                  onChange={e => setDeliveryMessage(e.target.value)}
+                  style={inputStyle} placeholder="Estimated delivery: {{date_range}}" />
+                <p style={helpText}>Use <code style={codeStyle}>{"{{date_range}}"}</code> for the computed date range (e.g. "Jun 10 – Jun 14").</p>
+              </div>
+              <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
+                <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
+                <p style={{ margin: 0, fontSize: 12, color: "#6b7280", fontWeight: 500 }}>
+                  {(() => {
+                    const now = new Date();
+                    const add = (d) => { const r = new Date(now); r.setDate(r.getDate() + d); return r.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+                    const range = add(deliveryMinDays) + " – " + add(deliveryMaxDays);
+                    return (deliveryMessage || "Estimated delivery: {{date_range}}").replace("{{date_range}}", range);
+                  })()}
+                </p>
+              </div>
+            </>
           )}
         </s-stack>
       </s-section>
