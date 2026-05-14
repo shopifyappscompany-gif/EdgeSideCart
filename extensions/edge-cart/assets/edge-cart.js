@@ -49,6 +49,8 @@
   var inventoryCache       = {};   /* keyed by variant_id — stores inventory_quantity */
   var cartShareToastTimer  = null;
   var orderSummaryOpen     = false;
+  var announcementIndex    = 0;
+  var announcementTimer    = null;
 
   /* ===========================================================
      BOOT
@@ -93,6 +95,7 @@
         syncFreebie();
         trackRecentlyViewed();
         initStickyAtc();
+        initProductPage();
       })
       .catch(function (err) {
         console.warn("[EdgeCart] init error:", err);
@@ -311,6 +314,7 @@
           '<div class="ec-body" id="ec-body"></div>',
           '<div class="ec-footer" id="ec-footer"></div>',
         '</div>',
+        '<div class="ec-checkout-bar" id="ec-checkout-bar"></div>',
       '</div>',
     ].join("");
 
@@ -343,6 +347,19 @@
   function renderBanner() {
     var el = id("ec-banner");
     if (!el || !settings) return;
+
+    if (settings.announcementsEnabled) {
+      var msgs = (settings.announcements || []).filter(function (a) { return a.enabled !== false && a.text; });
+      if (msgs.length > 0) {
+        var msg = msgs[announcementIndex % msgs.length];
+        el.textContent      = msg.text;
+        el.style.display    = "";
+        el.style.background = msg.bgColor  || "#1a1a1a";
+        el.style.color      = msg.textColor || "#fff";
+        return;
+      }
+    }
+
     if (settings.bannerEnabled && settings.bannerText) {
       el.textContent      = settings.bannerText;
       el.style.display    = "";
@@ -351,6 +368,22 @@
     } else {
       el.style.display = "none";
     }
+  }
+
+  function startAnnouncementTimer() {
+    stopAnnouncementTimer();
+    if (!settings || !settings.announcementsEnabled) return;
+    var msgs = (settings.announcements || []).filter(function (a) { return a.enabled !== false && a.text; });
+    if (msgs.length <= 1) return;
+    var interval = Math.max(2, settings.announcementInterval || 4) * 1000;
+    announcementTimer = setInterval(function () {
+      announcementIndex = (announcementIndex + 1) % msgs.length;
+      renderBanner();
+    }, interval);
+  }
+
+  function stopAnnouncementTimer() {
+    if (announcementTimer) { clearInterval(announcementTimer); announcementTimer = null; }
   }
 
   /* ── Scarcity countdown ─────────────────────────────────── */
@@ -531,8 +564,9 @@
     }
 
     var freeShipHtml = settings.freeShippingBarEnabled ? buildFreeShippingBarHTML() : "";
+    var freebieTopHtml = settings.freebieShowAtTop ? buildFreebieHTML() : "";
 
-    body.innerHTML = freeShipHtml + '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>' + ocuBodyHtml + giftWrapBodyHtml;
+    body.innerHTML = freebieTopHtml + freeShipHtml + '<div class="ec-items" id="ec-items">' + cart.items.map(renderItem).join("") + '</div>' + ocuBodyHtml + giftWrapBodyHtml;
 
     /* Bind OCU checkbox */
     var ocuBodyCheck = id("ec-ocu-check");
@@ -682,8 +716,10 @@
 
   function renderFooter() {
     var footer = id("ec-footer");
+    var checkoutBar = id("ec-checkout-bar");
     if (!footer || !cart || cart.item_count === 0) {
       if (footer) footer.innerHTML = "";
+      if (checkoutBar) checkoutBar.innerHTML = "";
       return;
     }
 
@@ -694,8 +730,8 @@
     var finalTotal = cart.total_price;
     var html = "";
 
-    /* Freebie */
-    html += buildFreebieHTML();
+    /* Freebie — skip when shown at top of body */
+    if (!settings.freebieShowAtTop) html += buildFreebieHTML();
 
     /* Volume discounts */
     if (settings.volumeDiscountEnabled) html += buildVolumeDiscountHTML();
@@ -818,18 +854,18 @@
     /* Cart share link */
     if (settings.cartShareEnabled) html += buildCartShareHTML();
 
-    var stickyHtml = '<div class="ec-checkout-sticky">';
-    stickyHtml += [
-      '<button class="ec-checkout-btn" id="ec-checkout">',
-        'Checkout · ' + money(finalTotal),
-      '</button>',
-    ].join("");
-    if (settings.expressCheckoutEnabled) stickyHtml += buildExpressCheckoutHTML();
-    if (settings.trustBadgesEnabled) stickyHtml += buildTrustBadgesHTML();
-    stickyHtml += '</div>';
-    html += stickyHtml;
-
     footer.innerHTML = html;
+
+    /* Checkout bar — rendered outside the scroll area so it never shifts on open */
+    if (checkoutBar) {
+      var checkoutHtml = "";
+      if (settings.deliveryEstimatorEnabled) checkoutHtml += buildDeliveryEstimatorHTML();
+      checkoutHtml += '<button class="ec-checkout-btn" id="ec-checkout">Checkout · ' + money(finalTotal) + '</button>';
+      if (settings.cartRecoveryEnabled) checkoutHtml += buildCartRecoveryHTML();
+      if (settings.expressCheckoutEnabled) checkoutHtml += buildExpressCheckoutHTML();
+      if (settings.trustBadgesEnabled) checkoutHtml += buildTrustBadgesHTML();
+      checkoutBar.innerHTML = checkoutHtml;
+    }
 
     /* Bind discount input */
     var applyBtn  = id("ec-disc-apply");
@@ -1290,6 +1326,30 @@
     ].join("");
   }
 
+  /* ── Cart Recovery / WhatsApp Share ─────────────────────── */
+  function buildCartRecoveryHTML() {
+    var cartUrl = "https://" + window.location.hostname + "/cart/" +
+      cart.items.map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
+    var msg = (settings.cartRecoveryMessage || "Check out my cart: {{url}}").replace("{{url}}", cartUrl);
+    var waPhone = (settings.cartRecoveryWhatsApp || "").replace(/[^0-9]/g, "");
+    var waUrl = "https://wa.me/" + (waPhone || "") + "?text=" + encodeURIComponent(msg);
+    return '<div class="ec-recovery"><a class="ec-recovery__wa" href="' + esc(waUrl) + '" target="_blank" rel="noopener">💬 Share on WhatsApp</a></div>';
+  }
+
+  /* ── Delivery Date Estimator ─────────────────────────────── */
+  function buildDeliveryEstimatorHTML() {
+    var now  = new Date();
+    var hour = now.getHours();
+    var cutoff = settings.deliveryCutoffHour != null ? settings.deliveryCutoffHour : 14;
+    var offset = hour >= cutoff ? 1 : 0;
+    var minD = new Date(now); minD.setDate(minD.getDate() + (settings.deliveryMinDays || 3) + offset);
+    var maxD = new Date(now); maxD.setDate(maxD.getDate() + (settings.deliveryMaxDays || 7) + offset);
+    var fmtDate = function (d) { return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+    var range = fmtDate(minD) + " – " + fmtDate(maxD);
+    var txt = (settings.deliveryMessage || "Estimated delivery: {{date_range}}").replace("{{date_range}}", range);
+    return '<div class="ec-delivery">🚚 ' + esc(txt) + '</div>';
+  }
+
   /* ── Recently Viewed HTML (empty cart) ─────────────────── */
   function buildRecentlyViewedHTML() {
     var rv = [];
@@ -1469,6 +1529,240 @@
         nativeBtn.click();
       });
     }
+  }
+
+  /* ===========================================================
+     PRODUCT PAGE FEATURES
+  =========================================================== */
+  function initProductPage() {
+    if (!settings) return;
+    if (window.location.pathname.indexOf("/products/") === -1) return;
+    /* Small delay so the theme has finished rendering its DOM */
+    setTimeout(function () {
+      if (settings.productPageSocialProofEnabled)                         initSocialProof();
+      if (settings.productPageScarcityEnabled)                             initProductScarcity();
+      if (settings.productPageVolumeTableEnabled && settings.volumeDiscountEnabled) initProductVolumeTable();
+      if (settings.productPageFreebieTeaser)                               initProductFreebieTeaser();
+      if (settings.productPageUpsellEnabled)                               initProductUpsell();
+    }, 600);
+  }
+
+  /* Find the add-to-cart form — works across all Shopify themes */
+  function findAtcForm() {
+    return document.querySelector('form[action*="/cart/add"], form[action="/cart/add"]');
+  }
+
+  /* Insert element immediately after the ATC form */
+  function insertAfterAtc(html) {
+    var form = findAtcForm();
+    if (!form) return null;
+    var wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    var el = wrap.firstChild;
+    form.parentNode.insertBefore(el, form.nextSibling);
+    return el;
+  }
+
+  /* Insert element immediately before the ATC form */
+  function insertBeforeAtc(html) {
+    var form = findAtcForm();
+    if (!form) return null;
+    var wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    var el = wrap.firstChild;
+    form.parentNode.insertBefore(el, form);
+    return el;
+  }
+
+  /* ── 1. Social Proof Notifications ──────────────────────── */
+  function initSocialProof() {
+    var toast = document.createElement("div");
+    toast.id = "ec-sp-toast";
+    toast.className = "ec-sp-toast";
+    document.body.appendChild(toast);
+
+    var min      = settings.productPageSocialProofMin      || 5;
+    var max      = settings.productPageSocialProofMax      || 30;
+    var interval = (settings.productPageSocialProofInterval || 8) * 1000;
+    var template = settings.productPageSocialProofText || "🔥 {{count}} people bought this today";
+
+    function showProof() {
+      var count = Math.floor(Math.random() * (max - min + 1)) + min;
+      toast.textContent = template.replace("{{count}}", count);
+      toast.classList.add("ec-sp-toast--visible");
+      setTimeout(function () { toast.classList.remove("ec-sp-toast--visible"); }, 3500);
+    }
+
+    setTimeout(showProof, 2000);
+    setInterval(showProof, interval);
+  }
+
+  /* ── 2. Product Scarcity Badge ───────────────────────────── */
+  function initProductScarcity() {
+    var threshold = settings.stockScarcityThreshold || 5;
+    var template  = settings.stockScarcityText || "Only {{count}} left!";
+    var match     = window.location.pathname.match(/\/products\/([^/?#]+)/);
+    var handle    = match ? match[1] : null;
+    if (!handle) return;
+
+    fetch("/products/" + handle + ".js")
+      .then(function (r) { return r.json(); })
+      .then(function (product) {
+        var selInput = document.querySelector('input[name="id"], select[name="id"]');
+        var selId    = selInput ? String(selInput.value) : null;
+        var variant  = (selId && product.variants.find(function (v) { return String(v.id) === selId; }))
+                     || product.variants[0];
+        if (!variant) return;
+        var qty = variant.inventory_quantity;
+        if (variant.inventory_management !== "shopify" || qty === null || qty > threshold || qty <= 0) return;
+        var badge = document.createElement("div");
+        badge.className = "ec-pp-scarcity";
+        badge.innerHTML = "⚠️ " + esc(template.replace("{{count}}", qty));
+        var form = findAtcForm();
+        if (form) form.parentNode.insertBefore(badge, form.nextSibling);
+      })
+      .catch(function () {});
+  }
+
+  /* ── 3. Volume Discount Table ────────────────────────────── */
+  function initProductVolumeTable() {
+    var tiers = settings.volumeDiscounts || [];
+    if (!tiers.length) return;
+
+    var html  = '<div class="ec-pp-volume">';
+    html += '<p class="ec-pp-volume__title">' + esc(settings.volumeDiscountTitle || "Buy more, save more!") + '</p>';
+    html += '<div class="ec-pp-volume__grid">';
+    tiers.forEach(function (t) {
+      html += '<div class="ec-pp-volume__tier">'
+            + '<span class="ec-pp-volume__qty">Buy ' + t.qty + '+</span>'
+            + '<span class="ec-pp-volume__pct">' + t.pct + '% off</span>'
+            + '</div>';
+    });
+    html += '</div></div>';
+    insertBeforeAtc(html);
+  }
+
+  /* ── 4. Free Gift Teaser ─────────────────────────────────── */
+  function initProductFreebieTeaser() {
+    var offers = settings.freebieOffers || [];
+    var offer  = offers.find(function (o) { return o.enabled !== false && o.triggerType === "cartValue"; });
+    if (!offer) offer = offers.find(function (o) { return o.enabled !== false && o.minCartValue; });
+    if (!offer && settings.freebieMinCartValue) {
+      offer = { minCartValue: settings.freebieMinCartValue };
+    }
+    if (!offer) return;
+
+    fetch("/cart.js")
+      .then(function (r) { return r.json(); })
+      .then(function (c) {
+        var threshold = offer.minCartValue || 100;
+        var needed    = threshold - (c.total_price / 100);
+        if (needed <= 0) return;
+        var html = '<div class="ec-pp-freebie">🎁 Add ' + money(Math.round(needed * 100)) + ' more to unlock a free gift!</div>';
+        insertAfterAtc(html);
+      })
+      .catch(function () {});
+  }
+
+  /* ── 5. Product Page Upsell ──────────────────────────────── */
+  function initProductUpsell() {
+    var title   = settings.productPageUpsellTitle || "Customers Also Bought";
+    var limit   = settings.productPageUpsellLimit || 3;
+    var manual  = settings.productPageUpsellProducts || [];
+
+    if (manual.length > 0) {
+      renderProductPageUpsell(title, manual.slice(0, limit));
+      return;
+    }
+
+    /* Get product numeric ID from Shopify analytics or page meta */
+    var productId = null;
+    try {
+      if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product) {
+        productId = window.ShopifyAnalytics.meta.product.id;
+      }
+    } catch (_) {}
+    if (!productId) {
+      var jsonEl = document.querySelector('[data-product-json], #ProductJson-product-template, #product-json');
+      if (jsonEl) { try { productId = JSON.parse(jsonEl.textContent).id; } catch (_) {} }
+    }
+    if (!productId) return;
+
+    fetch("/recommendations/products.json?product_id=" + productId + "&limit=" + limit + "&intent=related")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.products || !data.products.length) return;
+        var products = data.products.slice(0, limit).map(function (p) {
+          var v = p.variants && p.variants[0];
+          return {
+            title:     p.title,
+            handle:    p.handle,
+            imageUrl:  p.images && p.images[0] ? p.images[0].src : "",
+            price:     v ? Math.round(parseFloat(v.price) * 100) : (p.price * 100),
+            variantId: v ? v.id : null,
+          };
+        });
+        renderProductPageUpsell(title, products);
+      })
+      .catch(function () {});
+  }
+
+  function renderProductPageUpsell(title, products) {
+    if (!products.length) return;
+
+    var html = '<div class="ec-pp-upsell" id="ec-pp-upsell">';
+    html += '<p class="ec-pp-upsell__title">' + esc(title) + '</p>';
+    html += '<div class="ec-pp-upsell__grid">';
+    products.forEach(function (p) {
+      var href = "/products/" + (p.handle || "");
+      var img  = p.imageUrl
+        ? '<img class="ec-pp-upsell__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy">'
+        : '<div class="ec-pp-upsell__img ec-pp-upsell__img--placeholder"></div>';
+      html += '<div class="ec-pp-upsell__card">'
+            + '<a href="' + esc(href) + '" class="ec-pp-upsell__img-wrap">' + img + '</a>'
+            + '<p class="ec-pp-upsell__name">' + esc(p.title) + '</p>'
+            + '<p class="ec-pp-upsell__price">' + money(p.price) + '</p>'
+            + '<button class="ec-pp-upsell__btn" data-vid="' + esc(String(p.variantId || "")) + '">Add to Cart</button>'
+            + '</div>';
+    });
+    html += '</div></div>';
+
+    /* Find best injection point: after the ATC form, or after the product section */
+    var form = findAtcForm();
+    var injected = false;
+    if (form) {
+      var wrap = document.createElement("div");
+      wrap.innerHTML = html;
+      form.parentNode.insertBefore(wrap.firstChild, form.nextSibling);
+      injected = true;
+    }
+    if (!injected) {
+      document.body.insertAdjacentHTML("beforeend", html);
+    }
+
+    /* Bind Add to Cart buttons */
+    var upsellSection = document.getElementById("ec-pp-upsell");
+    if (!upsellSection) return;
+    upsellSection.querySelectorAll(".ec-pp-upsell__btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var vid = btn.getAttribute("data-vid");
+        if (!vid) return;
+        btn.disabled    = true;
+        btn.textContent = "Adding…";
+        cartAdd(vid, 1, {})
+          .then(function (item) {
+            handlePostAdd(item, true);
+            btn.textContent = "Added ✓";
+          })
+          .catch(function () { btn.textContent = "Add to Cart"; })
+          .finally(function () {
+            setTimeout(function () {
+              btn.disabled    = false;
+              btn.textContent = "Add to Cart";
+            }, 2000);
+          });
+      });
+    });
   }
 
   /* ── One-Click Upsell HTML ──────────────────────────────── */
@@ -1727,6 +2021,7 @@
     if (closeBtn) setTimeout(function () { closeBtn.focus(); }, 50);
     /* Kick off AI recommendations fetch (async, re-renders footer when ready) */
     fetchAiRecommendations();
+    startAnnouncementTimer();
   }
 
   function closeCart() {
@@ -1737,6 +2032,7 @@
     if (overlay) overlay.classList.remove("ec-overlay--visible");
     document.body.style.overflow = "";
     if (scarcityTimer) { clearInterval(scarcityTimer); scarcityTimer = null; }
+    stopAnnouncementTimer();
   }
 
   /* ===========================================================

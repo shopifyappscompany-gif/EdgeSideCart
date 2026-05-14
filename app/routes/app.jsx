@@ -18,7 +18,6 @@ export default function App() {
         <s-link href="/app/settings">Cart Drawer</s-link>
         <s-link href="/app/upsell">Upsell</s-link>
         <s-link href="/app/freebie">Freebie</s-link>
-        <s-link href="/app/features">Features</s-link>
         <s-link href="/app/billing">Pricing</s-link>
         <s-link href="/app/help">Help & Support</s-link>
       </s-app-nav>

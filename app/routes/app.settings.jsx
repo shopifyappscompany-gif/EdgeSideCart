@@ -23,6 +23,9 @@ export const action = async ({ request }) => {
     bannerText:           String(form.get("bannerText") || ""),
     bannerBgColor:        String(form.get("bannerBgColor") || "#1a1a1a"),
     bannerTextColor:      String(form.get("bannerTextColor") || "#ffffff"),
+    announcementsEnabled: form.get("announcementsEnabled") === "true",
+    announcements:        String(form.get("announcements") || "[]"),
+    announcementInterval: parseInt(form.get("announcementInterval") || "4", 10),
     discountEnabled:      form.get("discountEnabled") === "true",
     autoDiscountEnabled:  form.get("autoDiscountEnabled") === "true",
     autoDiscountCode:     String(form.get("autoDiscountCode") || ""),
@@ -82,6 +85,11 @@ export default function GeneralSettings() {
   const [bannerText,           setBannerText]           = useState(s.bannerText ?? "🎉 Free shipping on orders over $50!");
   const [bannerBgColor,        setBannerBgColor]        = useState(s.bannerBgColor ?? "#1a1a1a");
   const [bannerTextColor,      setBannerTextColor]      = useState(s.bannerTextColor ?? "#ffffff");
+  const [announcementsEnabled, setAnnouncementsEnabled] = useState(s.announcementsEnabled ?? false);
+  const [announcementInterval, setAnnouncementInterval] = useState(s.announcementInterval ?? 4);
+  const [announcements, setAnnouncements] = useState(() => {
+    try { return JSON.parse(s.announcements || "[]"); } catch { return []; }
+  });
   const [discountEnabled,      setDiscountEnabled]      = useState(s.discountEnabled ?? true);
   const [autoDiscountEnabled,  setAutoDiscountEnabled]  = useState(s.autoDiscountEnabled ?? false);
   const [autoDiscountCode,     setAutoDiscountCode]     = useState(s.autoDiscountCode ?? "");
@@ -124,6 +132,7 @@ export default function GeneralSettings() {
     return JSON.stringify({
       enabled, headerText, primaryColor,
       bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
+      announcementsEnabled, announcements, announcementInterval,
       discountEnabled, autoDiscountEnabled, autoDiscountCode,
       orderNotesEnabled, showVariantTitle,
       scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
@@ -140,6 +149,7 @@ export default function GeneralSettings() {
   useEffect(() => {
     setIsDirty(snap() !== savedSnap.current);
   }, [enabled, headerText, primaryColor, bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
+      announcementsEnabled, announcements, announcementInterval,
       discountEnabled, autoDiscountEnabled, autoDiscountCode, orderNotesEnabled, showVariantTitle,
       scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
       tieredRewardsEnabled, tieredRewards, scrollableItems, showLineItemProperties, blockCartPage,
@@ -168,6 +178,9 @@ export default function GeneralSettings() {
     setBannerText(s.bannerText ?? "🎉 Free shipping on orders over $50!");
     setBannerBgColor(s.bannerBgColor ?? "#1a1a1a");
     setBannerTextColor(s.bannerTextColor ?? "#ffffff");
+    setAnnouncementsEnabled(s.announcementsEnabled ?? false);
+    setAnnouncementInterval(s.announcementInterval ?? 4);
+    setAnnouncements(() => { try { return JSON.parse(s.announcements || "[]"); } catch { return []; } });
     setDiscountEnabled(s.discountEnabled ?? true);
     setAutoDiscountEnabled(s.autoDiscountEnabled ?? false);
     setAutoDiscountCode(s.autoDiscountCode ?? "");
@@ -213,6 +226,9 @@ export default function GeneralSettings() {
         bannerText,
         bannerBgColor,
         bannerTextColor,
+        announcementsEnabled: String(announcementsEnabled),
+        announcements:        JSON.stringify(announcements),
+        announcementInterval: String(announcementInterval),
         discountEnabled:      String(discountEnabled),
         autoDiscountEnabled:  String(autoDiscountEnabled),
         autoDiscountCode,
@@ -282,7 +298,7 @@ export default function GeneralSettings() {
     <s-page heading="Cart Drawer">
       {/* ── Tabs ── */}
       <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "2px solid #e5e7eb" }}>
-        {[{ id: "settings", label: "Settings" }, { id: "analytics", label: "Analytics" }].map(tab => (
+        {[{ id: "settings", label: "Settings" }, { id: "features", label: "Features" }, { id: "productpage", label: "Product Page" }, { id: "analytics", label: "Analytics" }].map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -386,6 +402,64 @@ export default function GeneralSettings() {
                   <ColorPicker value={bannerTextColor} onChange={setBannerTextColor} small />
                 </div>
               </div>
+            </>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* ── Rotating Announcements ── */}
+      <s-section heading="Rotating Announcements">
+        <s-stack direction="block" gap="base">
+          <ToggleRow
+            label="Enable Rotating Announcements"
+            desc="Cycle through multiple promotional messages in the banner area. Overrides the single banner above when enabled."
+            checked={announcementsEnabled}
+            onChange={setAnnouncementsEnabled}
+          />
+          {announcementsEnabled && (
+            <>
+              <div>
+                <label style={labelStyle}>Rotation Interval (seconds)</label>
+                <input type="number" value={announcementInterval} min="2" max="30"
+                  onChange={e => setAnnouncementInterval(Math.max(2, parseInt(e.target.value) || 4))}
+                  style={{ ...inputStyle, width: 100 }} />
+                <p style={helpText}>How long each message shows before switching to the next one.</p>
+              </div>
+              {announcements.map((ann, idx) => (
+                <div key={ann.id} style={{ border: "1.5px solid #e0e0e0", borderRadius: 10, padding: 14, background: "#fafafa" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <strong style={{ fontSize: 13 }}>Message {idx + 1}</strong>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <ToggleInline checked={ann.enabled !== false} onChange={v => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, enabled: v } : a))} />
+                      <button onClick={() => setAnnouncements(announcements.filter((_, i) => i !== idx))}
+                        style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 14px", background: ann.bgColor || "#1a1a1a", color: ann.textColor || "#fff", borderRadius: 8, textAlign: "center", fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
+                    {ann.text || "Message preview"}
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Text</label>
+                    <input type="text" value={ann.text || ""} style={inputStyle}
+                      onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, text: e.target.value } : a))}
+                      placeholder="🎉 Free shipping on orders over $50!" />
+                  </div>
+                  <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 10 }}>
+                    <div>
+                      <label style={labelStyle}>Background</label>
+                      <ColorPicker value={ann.bgColor || "#1a1a1a"} onChange={v => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, bgColor: v } : a))} small />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Text Color</label>
+                      <ColorPicker value={ann.textColor || "#ffffff"} onChange={v => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, textColor: v } : a))} small />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => setAnnouncements([...announcements, { id: "ann_" + Date.now(), text: "", bgColor: "#1a1a1a", textColor: "#ffffff", enabled: true }])}
+                style={{ width: "100%", padding: "10px 16px", border: "1.5px dashed #ccc", borderRadius: 8, background: "none", color: "#555", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                + Add Message
+              </button>
             </>
           )}
         </s-stack>
@@ -716,6 +790,10 @@ export default function GeneralSettings() {
         </>
       )}
 
+      {activeTab === "features" && <FeaturesTab settings={s} shopify={shopify} />}
+
+      {activeTab === "productpage" && <ProductPageTab settings={s} shopify={shopify} />}
+
       {activeTab === "analytics" && (
         <AnalyticsTab
           data={analyticsF.data}
@@ -725,6 +803,577 @@ export default function GeneralSettings() {
         />
       )}
     </s-page>
+  );
+}
+
+// ── Features Tab ───────────────────────────────────────────
+const DEFAULT_BADGES = [
+  { id: "1", icon: "🔒", text: "Secure Checkout", enabled: true },
+  { id: "2", icon: "↩️", text: "Free Returns", enabled: true },
+  { id: "3", icon: "✅", text: "Money-Back Guarantee", enabled: true },
+  { id: "4", icon: "💬", text: "24/7 Support", enabled: true },
+];
+
+function FeaturesTab({ settings: s, shopify }) {
+  const featF = useFetcher();
+  const saving = featF.state !== "idle";
+  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+  function parseBadges(raw) { try { return JSON.parse(raw || "[]"); } catch { return []; } }
+  function parseTiers(raw) { try { return JSON.parse(raw || "[]"); } catch { return []; } }
+
+  const [freeShippingBarEnabled,   setFreeShippingBarEnabled]   = useState(s.freeShippingBarEnabled ?? false);
+  const [freeShippingThreshold,    setFreeShippingThreshold]    = useState(s.freeShippingThreshold ?? 50);
+  const [freeShippingText,         setFreeShippingText]         = useState(s.freeShippingText ?? "Add {{amount}} more for FREE shipping!");
+  const [freeShippingUnlockedText, setFreeShippingUnlockedText] = useState(s.freeShippingUnlockedText ?? "You've unlocked free shipping!");
+  const [trustBadgesEnabled, setTrustBadgesEnabled] = useState(s.trustBadgesEnabled ?? false);
+  const [trustBadges, setTrustBadges] = useState(() => { const p = parseBadges(s.trustBadges); return p.length > 0 ? p : DEFAULT_BADGES; });
+  const [stickyAtcEnabled, setStickyAtcEnabled] = useState(s.stickyAtcEnabled ?? false);
+  const [stickyAtcText,    setStickyAtcText]    = useState(s.stickyAtcText ?? "Add to Cart");
+  const [expressCheckoutEnabled,   setExpressCheckoutEnabled]   = useState(s.expressCheckoutEnabled ?? false);
+  const [expressCheckoutShopPay,   setExpressCheckoutShopPay]   = useState(s.expressCheckoutShopPay ?? true);
+  const [expressCheckoutApplePay,  setExpressCheckoutApplePay]  = useState(s.expressCheckoutApplePay ?? true);
+  const [expressCheckoutGooglePay, setExpressCheckoutGooglePay] = useState(s.expressCheckoutGooglePay ?? false);
+  const [volumeDiscountEnabled, setVolumeDiscountEnabled] = useState(s.volumeDiscountEnabled ?? false);
+  const [volumeDiscountTitle,   setVolumeDiscountTitle]   = useState(s.volumeDiscountTitle ?? "Buy more, save more!");
+  const [volumeDiscounts, setVolumeDiscounts] = useState(() => parseTiers(s.volumeDiscounts));
+  const [giftWrapEnabled,        setGiftWrapEnabled]        = useState(s.giftWrapEnabled ?? false);
+  const [giftWrapHeading,        setGiftWrapHeading]        = useState(s.giftWrapHeading ?? "Gift Options");
+  const [giftWrapLabel,          setGiftWrapLabel]          = useState(s.giftWrapLabel ?? "Add gift wrap");
+  const [giftWrapHideWhenInCart, setGiftWrapHideWhenInCart] = useState(s.giftWrapHideWhenInCart ?? true);
+  const [giftWrapProduct,        setGiftWrapProduct]        = useState(
+    s.giftWrapProductVariantId ? { variantId: s.giftWrapProductVariantId, title: s.giftWrapProductTitle || "", imageUrl: s.giftWrapProductImageUrl || "", price: s.giftWrapPrice || 0 } : null
+  );
+  const [stockScarcityEnabled,   setStockScarcityEnabled]   = useState(s.stockScarcityEnabled ?? false);
+  const [stockScarcityThreshold, setStockScarcityThreshold] = useState(s.stockScarcityThreshold ?? 5);
+  const [stockScarcityText,      setStockScarcityText]      = useState(s.stockScarcityText ?? "Only {{count}} left!");
+  const [recentlyViewedEnabled, setRecentlyViewedEnabled] = useState(s.recentlyViewedEnabled ?? false);
+  const [recentlyViewedTitle,   setRecentlyViewedTitle]   = useState(s.recentlyViewedTitle ?? "You might also like");
+  const [recentlyViewedLimit,   setRecentlyViewedLimit]   = useState(s.recentlyViewedLimit ?? 4);
+  const [cartShareEnabled, setCartShareEnabled] = useState(s.cartShareEnabled ?? false);
+  const [cartShareText,    setCartShareText]    = useState(s.cartShareText ?? "Share your cart");
+  const [cartRecoveryEnabled,  setCartRecoveryEnabled]  = useState(s.cartRecoveryEnabled ?? false);
+  const [cartRecoveryWhatsApp, setCartRecoveryWhatsApp] = useState(s.cartRecoveryWhatsApp ?? "");
+  const [cartRecoveryMessage,  setCartRecoveryMessage]  = useState(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
+  const [deliveryEstimatorEnabled, setDeliveryEstimatorEnabled] = useState(s.deliveryEstimatorEnabled ?? false);
+  const [deliveryMinDays,          setDeliveryMinDays]          = useState(s.deliveryMinDays ?? 3);
+  const [deliveryMaxDays,          setDeliveryMaxDays]          = useState(s.deliveryMaxDays ?? 7);
+  const [deliveryMessage,          setDeliveryMessage]          = useState(s.deliveryMessage ?? "Estimated delivery: {{date_range}}");
+  const [deliveryCutoffHour,       setDeliveryCutoffHour]       = useState(s.deliveryCutoffHour ?? 14);
+
+  function snap() {
+    return JSON.stringify({
+      freeShippingBarEnabled, freeShippingThreshold, freeShippingText, freeShippingUnlockedText,
+      trustBadgesEnabled, trustBadges, stickyAtcEnabled, stickyAtcText,
+      expressCheckoutEnabled, expressCheckoutShopPay, expressCheckoutApplePay, expressCheckoutGooglePay,
+      volumeDiscountEnabled, volumeDiscountTitle, volumeDiscounts,
+      giftWrapEnabled, giftWrapHeading, giftWrapLabel, giftWrapHideWhenInCart, giftWrapProduct,
+      stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
+      recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
+      cartShareEnabled, cartShareText,
+      cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+      deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
+    });
+  }
+  const savedSnap = useRef(snap());
+  const [isDirty, setIsDirty] = useState(false);
+
+  useEffect(() => { setIsDirty(snap() !== savedSnap.current); }, [
+    freeShippingBarEnabled, freeShippingThreshold, freeShippingText, freeShippingUnlockedText,
+    trustBadgesEnabled, trustBadges, stickyAtcEnabled, stickyAtcText,
+    expressCheckoutEnabled, expressCheckoutShopPay, expressCheckoutApplePay, expressCheckoutGooglePay,
+    volumeDiscountEnabled, volumeDiscountTitle, volumeDiscounts,
+    giftWrapEnabled, giftWrapHeading, giftWrapLabel, giftWrapHideWhenInCart, giftWrapProduct,
+    stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
+    recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
+    cartShareEnabled, cartShareText,
+    cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+    deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
+  ]);
+
+  useEffect(() => {
+    if (featF.data?.success) { shopify.toast.show("Settings saved!"); savedSnap.current = snap(); setIsDirty(false); }
+  }, [featF.data]);
+
+  function handleDiscard() {
+    setFreeShippingBarEnabled(s.freeShippingBarEnabled ?? false);
+    setFreeShippingThreshold(s.freeShippingThreshold ?? 50);
+    setFreeShippingText(s.freeShippingText ?? "Add {{amount}} more for FREE shipping!");
+    setFreeShippingUnlockedText(s.freeShippingUnlockedText ?? "You've unlocked free shipping!");
+    setTrustBadgesEnabled(s.trustBadgesEnabled ?? false);
+    setTrustBadges(() => { const p = parseBadges(s.trustBadges); return p.length > 0 ? p : DEFAULT_BADGES; });
+    setStickyAtcEnabled(s.stickyAtcEnabled ?? false); setStickyAtcText(s.stickyAtcText ?? "Add to Cart");
+    setExpressCheckoutEnabled(s.expressCheckoutEnabled ?? false); setExpressCheckoutShopPay(s.expressCheckoutShopPay ?? true);
+    setExpressCheckoutApplePay(s.expressCheckoutApplePay ?? true); setExpressCheckoutGooglePay(s.expressCheckoutGooglePay ?? false);
+    setVolumeDiscountEnabled(s.volumeDiscountEnabled ?? false); setVolumeDiscountTitle(s.volumeDiscountTitle ?? "Buy more, save more!");
+    setVolumeDiscounts(() => parseTiers(s.volumeDiscounts));
+    setGiftWrapEnabled(s.giftWrapEnabled ?? false); setGiftWrapHeading(s.giftWrapHeading ?? "Gift Options");
+    setGiftWrapLabel(s.giftWrapLabel ?? "Add gift wrap"); setGiftWrapHideWhenInCart(s.giftWrapHideWhenInCart ?? true);
+    setGiftWrapProduct(s.giftWrapProductVariantId ? { variantId: s.giftWrapProductVariantId, title: s.giftWrapProductTitle || "", imageUrl: s.giftWrapProductImageUrl || "", price: s.giftWrapPrice || 0 } : null);
+    setStockScarcityEnabled(s.stockScarcityEnabled ?? false); setStockScarcityThreshold(s.stockScarcityThreshold ?? 5); setStockScarcityText(s.stockScarcityText ?? "Only {{count}} left!");
+    setRecentlyViewedEnabled(s.recentlyViewedEnabled ?? false); setRecentlyViewedTitle(s.recentlyViewedTitle ?? "You might also like"); setRecentlyViewedLimit(s.recentlyViewedLimit ?? 4);
+    setCartShareEnabled(s.cartShareEnabled ?? false); setCartShareText(s.cartShareText ?? "Share your cart");
+    setCartRecoveryEnabled(s.cartRecoveryEnabled ?? false); setCartRecoveryWhatsApp(s.cartRecoveryWhatsApp ?? ""); setCartRecoveryMessage(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
+    setDeliveryEstimatorEnabled(s.deliveryEstimatorEnabled ?? false); setDeliveryMinDays(s.deliveryMinDays ?? 3); setDeliveryMaxDays(s.deliveryMaxDays ?? 7);
+    setDeliveryMessage(s.deliveryMessage ?? "Estimated delivery: {{date_range}}"); setDeliveryCutoffHour(s.deliveryCutoffHour ?? 14);
+  }
+
+  function handleSubmit() {
+    featF.submit({
+      freeShippingBarEnabled: String(freeShippingBarEnabled), freeShippingThreshold: String(freeShippingThreshold),
+      freeShippingText, freeShippingUnlockedText,
+      trustBadgesEnabled: String(trustBadgesEnabled), trustBadges: JSON.stringify(trustBadges),
+      stickyAtcEnabled: String(stickyAtcEnabled), stickyAtcText,
+      expressCheckoutEnabled: String(expressCheckoutEnabled), expressCheckoutShopPay: String(expressCheckoutShopPay),
+      expressCheckoutApplePay: String(expressCheckoutApplePay), expressCheckoutGooglePay: String(expressCheckoutGooglePay),
+      volumeDiscountEnabled: String(volumeDiscountEnabled), volumeDiscountTitle, volumeDiscounts: JSON.stringify(volumeDiscounts),
+      giftWrapEnabled: String(giftWrapEnabled), giftWrapHeading, giftWrapLabel, giftWrapHideWhenInCart: String(giftWrapHideWhenInCart),
+      giftWrapProductVariantId: giftWrapProduct?.variantId || "", giftWrapProductTitle: giftWrapProduct?.title || "",
+      giftWrapProductImageUrl: giftWrapProduct?.imageUrl || "", giftWrapPrice: String(giftWrapProduct?.price || 0),
+      stockScarcityEnabled: String(stockScarcityEnabled), stockScarcityThreshold: String(stockScarcityThreshold), stockScarcityText,
+      recentlyViewedEnabled: String(recentlyViewedEnabled), recentlyViewedTitle, recentlyViewedLimit: String(recentlyViewedLimit),
+      cartShareEnabled: String(cartShareEnabled), cartShareText,
+      cartRecoveryEnabled: String(cartRecoveryEnabled), cartRecoveryWhatsApp, cartRecoveryMessage,
+      deliveryEstimatorEnabled: String(deliveryEstimatorEnabled), deliveryMinDays: String(deliveryMinDays), deliveryMaxDays: String(deliveryMaxDays),
+      deliveryMessage, deliveryCutoffHour: String(deliveryCutoffHour),
+    }, { method: "POST", action: "/app/features" });
+  }
+
+  function addBadge() { setTrustBadges([...trustBadges, { id: "b_" + Date.now(), icon: "⭐", text: "New Badge", enabled: true }]); }
+  function updateBadge(id, field, value) { setTrustBadges(trustBadges.map(b => b.id === id ? { ...b, [field]: value } : b)); }
+  function removeBadge(id) { setTrustBadges(trustBadges.filter(b => b.id !== id)); }
+  function addVdTier() { setVolumeDiscounts([...volumeDiscounts, { id: "vd_" + Date.now(), qty: 2, pct: 10 }]); }
+  function updateVdTier(id, field, value) { setVolumeDiscounts(volumeDiscounts.map(t => t.id === id ? { ...t, [field]: value } : t)); }
+  function removeVdTier(id) { setVolumeDiscounts(volumeDiscounts.filter(t => t.id !== id)); }
+
+  async function pickGiftWrapProduct() {
+    const selected = await shopify.resourcePicker({ type: "product", multiple: false });
+    if (!selected || selected.length === 0) return;
+    const p = selected[0]; const variant = p.variants?.[0];
+    setGiftWrapProduct({ variantId: variant?.id || "", title: p.title || "", imageUrl: p.images?.[0]?.originalSrc || "", price: variant?.price ? Math.round(parseFloat(variant.price) * 100) : 0 });
+  }
+
+  const codeStyle = { background: "#f5f5f5", padding: "1px 5px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" };
+
+  return (
+    <>
+      {isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}
+
+      {/* Free Shipping Progress Bar */}
+      <s-section heading="Free Shipping Progress Bar">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Free Shipping Bar" desc="Show a progress bar at the top of the cart tracking how close the customer is to free shipping." checked={freeShippingBarEnabled} onChange={setFreeShippingBarEnabled} />
+          {freeShippingBarEnabled && (<>
+            <div>
+              <label style={labelStyle}>Free Shipping Threshold ($)</label>
+              <input type="number" value={freeShippingThreshold} onChange={e => setFreeShippingThreshold(parseFloat(e.target.value) || 50)} style={{ ...inputStyle, width: 120 }} min="0" step="0.01" />
+              <p style={helpText}>Cart total required to unlock free shipping.</p>
+            </div>
+            <div>
+              <label style={labelStyle}>Locked Message</label>
+              <input type="text" value={freeShippingText} onChange={e => setFreeShippingText(e.target.value)} style={inputStyle} placeholder="Add {{amount}} more for FREE shipping!" />
+              <p style={helpText}>Use <code style={codeStyle}>{"{{amount}}"}</code> to show the remaining amount dynamically.</p>
+            </div>
+            <div>
+              <label style={labelStyle}>Unlocked Message</label>
+              <input type="text" value={freeShippingUnlockedText} onChange={e => setFreeShippingUnlockedText(e.target.value)} style={inputStyle} placeholder="You've unlocked free shipping!" />
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Trust Badges */}
+      <s-section heading="Trust Badges">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Trust Badges" desc="Show security and trust icons below the checkout button to boost conversion." checked={trustBadgesEnabled} onChange={setTrustBadgesEnabled} />
+          {trustBadgesEnabled && (<>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, padding: "12px 14px", background: "#f9fafb", borderRadius: 10, border: "1px solid #e5e7eb" }}>
+              {trustBadges.filter(b => b.enabled).map(b => (
+                <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}>
+                  <span>{b.icon}</span><span style={{ fontWeight: 500, color: "#374151" }}>{b.text}</span>
+                </div>
+              ))}
+            </div>
+            {trustBadges.map((badge, idx) => (
+              <div key={badge.id} style={{ border: "1.5px solid #e0e0e0", borderRadius: 10, padding: 14, background: "#fafafa" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <strong style={{ fontSize: 13 }}>Badge {idx + 1}</strong>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <label style={toggleWrap}>
+                      <input type="checkbox" checked={badge.enabled} onChange={e => updateBadge(badge.id, "enabled", e.target.checked)} style={{ display: "none" }} />
+                      <span style={{ ...toggleTrack, background: badge.enabled ? "#008060" : "#ccc" }}><span style={{ ...toggleThumb, transform: badge.enabled ? "translateX(20px)" : "translateX(2px)" }} /></span>
+                    </label>
+                    <button onClick={() => removeBadge(badge.id)} style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ flex: "0 0 70px" }}>
+                    <label style={labelStyle}>Icon</label>
+                    <input type="text" value={badge.icon} onChange={e => updateBadge(badge.id, "icon", e.target.value)} style={{ ...inputStyle, textAlign: "center", fontSize: 18 }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>Text</label>
+                    <input type="text" value={badge.text} onChange={e => updateBadge(badge.id, "text", e.target.value)} style={inputStyle} />
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addBadge} style={{ ...outlineBtn, width: "100%" }}>+ Add Badge</button>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Sticky Add-to-Cart */}
+      <s-section heading="Sticky Add-to-Cart">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Sticky Add-to-Cart" desc="On product pages, show a fixed bottom bar when the main ATC button scrolls out of view." checked={stickyAtcEnabled} onChange={setStickyAtcEnabled} />
+          {stickyAtcEnabled && (
+            <div>
+              <label style={labelStyle}>Button Text</label>
+              <input type="text" value={stickyAtcText} onChange={e => setStickyAtcText(e.target.value)} style={inputStyle} placeholder="Add to Cart" />
+            </div>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* Express Checkout */}
+      <s-section heading="Express Checkout Buttons">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Express Checkout" desc="Show quick payment method buttons below the main checkout button (Shop Pay, Apple Pay, Google Pay)." checked={expressCheckoutEnabled} onChange={setExpressCheckoutEnabled} />
+          {expressCheckoutEnabled && (<>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {[
+                { key: "shopPay", val: expressCheckoutShopPay, set: setExpressCheckoutShopPay, label: "Shop Pay", color: "#5a31f4", desc: "Shopify's accelerated checkout" },
+                { key: "applePay", val: expressCheckoutApplePay, set: setExpressCheckoutApplePay, label: "Apple Pay", color: "#000", desc: "Available on Safari and iOS" },
+                { key: "googlePay", val: expressCheckoutGooglePay, set: setExpressCheckoutGooglePay, label: "Google Pay", color: "#4285f4", desc: "Available on Chrome and Android" },
+              ].map(opt => (
+                <div key={opt.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", border: "1.5px solid #e0e0e0", borderRadius: 10, background: "#fafafa" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: opt.color }} />
+                    <div><strong style={{ fontSize: 13 }}>{opt.label}</strong><p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{opt.desc}</p></div>
+                  </div>
+                  <label style={toggleWrap}>
+                    <input type="checkbox" checked={opt.val} onChange={e => opt.set(e.target.checked)} style={{ display: "none" }} />
+                    <span style={{ ...toggleTrack, background: opt.val ? "#008060" : "#ccc" }}><span style={{ ...toggleThumb, transform: opt.val ? "translateX(20px)" : "translateX(2px)" }} /></span>
+                  </label>
+                </div>
+              ))}
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Volume Discounts */}
+      <s-section heading="Volume Discounts">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Volume Discounts" desc="Show a discount tier table in the cart. Create matching discounts in Shopify Admin." checked={volumeDiscountEnabled} onChange={setVolumeDiscountEnabled} />
+          {volumeDiscountEnabled && (<>
+            <div>
+              <label style={labelStyle}>Section Title</label>
+              <input type="text" value={volumeDiscountTitle} onChange={e => setVolumeDiscountTitle(e.target.value)} style={inputStyle} placeholder="Buy more, save more!" />
+            </div>
+            {volumeDiscounts.map((tier, idx) => (
+              <div key={tier.id} style={{ border: "1.5px solid #e0e0e0", borderRadius: 10, padding: 14, background: "#fafafa" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <strong style={{ fontSize: 13 }}>Tier {idx + 1}</strong>
+                  <button onClick={() => removeVdTier(tier.id)} style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div style={{ flex: 1 }}><label style={labelStyle}>Min Quantity</label><input type="number" value={tier.qty} min="1" onChange={e => updateVdTier(tier.id, "qty", parseInt(e.target.value) || 1)} style={inputStyle} /></div>
+                  <div style={{ flex: 1 }}><label style={labelStyle}>Discount %</label><input type="number" value={tier.pct} min="1" max="99" onChange={e => updateVdTier(tier.id, "pct", parseInt(e.target.value) || 10)} style={inputStyle} /></div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addVdTier} style={{ ...outlineBtn, width: "100%" }}>+ Add Tier</button>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Gift Wrap */}
+      <s-section heading="Gift Wrap">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Gift Wrap" desc="Show a checkbox in the cart to let customers add gift wrapping." checked={giftWrapEnabled} onChange={setGiftWrapEnabled} />
+          {giftWrapEnabled && (<>
+            <div><label style={labelStyle}>Section Heading</label><input type="text" value={giftWrapHeading} onChange={e => setGiftWrapHeading(e.target.value)} style={inputStyle} placeholder="Gift Options" /></div>
+            <div><label style={labelStyle}>Checkbox Label</label><input type="text" value={giftWrapLabel} onChange={e => setGiftWrapLabel(e.target.value)} style={inputStyle} placeholder="Add gift wrap" /></div>
+            <ToggleRow label="Hide when product is already in cart" desc="Once gift wrap is added, the checkbox disappears." checked={giftWrapHideWhenInCart} onChange={setGiftWrapHideWhenInCart} />
+            <div>
+              <label style={labelStyle}>Gift Wrap Product</label>
+              {giftWrapProduct ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", border: "1.5px solid #e0e0e0", borderRadius: 10, background: "#fafafa" }}>
+                  {giftWrapProduct.imageUrl && <img src={giftWrapProduct.imageUrl} alt="" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 7, flexShrink: 0 }} />}
+                  <div style={{ flex: 1 }}><p style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>{giftWrapProduct.title}</p><p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{fmt(giftWrapProduct.price)}</p></div>
+                  <button onClick={pickGiftWrapProduct} style={{ ...outlineBtn, padding: "7px 14px", fontSize: 12 }}>Change</button>
+                  <button onClick={() => setGiftWrapProduct(null)} style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                </div>
+              ) : (
+                <button onClick={pickGiftWrapProduct} style={{ ...outlineBtn, width: "100%" }}>+ Select Gift Wrap Product</button>
+              )}
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Stock Scarcity Badges */}
+      <s-section heading="Stock Scarcity Badges">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Stock Scarcity Badges" desc="Show a low-stock warning badge on line items when inventory falls below the threshold." checked={stockScarcityEnabled} onChange={setStockScarcityEnabled} />
+          {stockScarcityEnabled && (<>
+            <div>
+              <label style={labelStyle}>Low Stock Threshold</label>
+              <input type="number" value={stockScarcityThreshold} min="1" max="50" onChange={e => setStockScarcityThreshold(parseInt(e.target.value) || 5)} style={{ ...inputStyle, width: 100 }} />
+              <p style={helpText}>Show the badge when inventory is at or below this number.</p>
+            </div>
+            <div>
+              <label style={labelStyle}>Badge Text</label>
+              <input type="text" value={stockScarcityText} onChange={e => setStockScarcityText(e.target.value)} style={inputStyle} placeholder="Only {{count}} left!" />
+              <p style={helpText}>Use <code style={codeStyle}>{"{{count}}"}</code> to show the actual inventory count.</p>
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Recently Viewed */}
+      <s-section heading="Recently Viewed (Empty Cart)">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Recently Viewed" desc="When the cart is empty, show a grid of recently viewed products." checked={recentlyViewedEnabled} onChange={setRecentlyViewedEnabled} />
+          {recentlyViewedEnabled && (<>
+            <div><label style={labelStyle}>Section Title</label><input type="text" value={recentlyViewedTitle} onChange={e => setRecentlyViewedTitle(e.target.value)} style={inputStyle} /></div>
+            <div>
+              <label style={labelStyle}>Max Products to Show (2–6)</label>
+              <input type="number" value={recentlyViewedLimit} min="2" max="6" onChange={e => setRecentlyViewedLimit(Math.min(6, Math.max(2, parseInt(e.target.value) || 4)))} style={{ ...inputStyle, width: 100 }} />
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Cart Share Link */}
+      <s-section heading="Cart Share Link">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Cart Share" desc="Add a 'Share cart' link that copies a permalink to the customer's current cart contents." checked={cartShareEnabled} onChange={setCartShareEnabled} />
+          {cartShareEnabled && (<div><label style={labelStyle}>Link Text</label><input type="text" value={cartShareText} onChange={e => setCartShareText(e.target.value)} style={inputStyle} /></div>)}
+        </s-stack>
+      </s-section>
+
+      {/* Cart Recovery / WhatsApp */}
+      <s-section heading="Cart Recovery & WhatsApp Share">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Cart Recovery" desc="Show a WhatsApp share button so customers can send their cart link to themselves or a friend." checked={cartRecoveryEnabled} onChange={setCartRecoveryEnabled} />
+          {cartRecoveryEnabled && (<>
+            <div>
+              <label style={labelStyle}>WhatsApp Phone Number (optional)</label>
+              <input type="text" value={cartRecoveryWhatsApp} onChange={e => setCartRecoveryWhatsApp(e.target.value.replace(/[^0-9]/g, ""))} style={inputStyle} placeholder="919876543210 (country code + number, no +)" />
+            </div>
+            <div>
+              <label style={labelStyle}>Message Template</label>
+              <input type="text" value={cartRecoveryMessage} onChange={e => setCartRecoveryMessage(e.target.value)} style={inputStyle} placeholder="Check out my cart: {{url}}" />
+              <p style={helpText}>Use <code style={codeStyle}>{"{{url}}"}</code> to insert the cart permalink automatically.</p>
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Delivery Date Estimator */}
+      <s-section heading="Delivery Date Estimator">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Delivery Estimator" desc="Show an estimated delivery date range above the checkout button." checked={deliveryEstimatorEnabled} onChange={setDeliveryEstimatorEnabled} />
+          {deliveryEstimatorEnabled && (<>
+            <div style={{ display: "flex", gap: 12 }}>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Min Days</label><input type="number" value={deliveryMinDays} min="1" max="30" onChange={e => setDeliveryMinDays(parseInt(e.target.value) || 3)} style={inputStyle} /></div>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Max Days</label><input type="number" value={deliveryMaxDays} min="1" max="60" onChange={e => setDeliveryMaxDays(parseInt(e.target.value) || 7)} style={inputStyle} /></div>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Cutoff Hour (24h)</label><input type="number" value={deliveryCutoffHour} min="0" max="23" onChange={e => setDeliveryCutoffHour(parseInt(e.target.value) || 14)} style={inputStyle} /><p style={helpText}>Orders after this hour ship next day.</p></div>
+            </div>
+            <div>
+              <label style={labelStyle}>Message Template</label>
+              <input type="text" value={deliveryMessage} onChange={e => setDeliveryMessage(e.target.value)} style={inputStyle} placeholder="Estimated delivery: {{date_range}}" />
+              <p style={helpText}>Use <code style={codeStyle}>{"{{date_range}}"}</code> for the computed date range.</p>
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+    </>
+  );
+}
+
+// ── Product Page Tab ────────────────────────────────────────
+function ProductPageTab({ settings: s, shopify }) {
+  const ppF = useFetcher();
+  const saving = ppF.state !== "idle";
+  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+  function parseProducts(raw) { try { return JSON.parse(raw || "[]"); } catch { return []; } }
+
+  const [socialProofEnabled,  setSocialProofEnabled]  = useState(s.productPageSocialProofEnabled ?? false);
+  const [socialProofText,     setSocialProofText]     = useState(s.productPageSocialProofText ?? "🔥 {{count}} people bought this today");
+  const [socialProofMin,      setSocialProofMin]      = useState(s.productPageSocialProofMin ?? 5);
+  const [socialProofMax,      setSocialProofMax]      = useState(s.productPageSocialProofMax ?? 30);
+  const [socialProofInterval, setSocialProofInterval] = useState(s.productPageSocialProofInterval ?? 8);
+  const [scarcityEnabled,    setScarcityEnabled]    = useState(s.productPageScarcityEnabled ?? false);
+  const [volumeTableEnabled, setVolumeTableEnabled] = useState(s.productPageVolumeTableEnabled ?? false);
+  const [freebieTeaser,      setFreebieTeaser]      = useState(s.productPageFreebieTeaser ?? false);
+  const [upsellEnabled,  setUpsellEnabled]  = useState(s.productPageUpsellEnabled ?? false);
+  const [upsellTitle,    setUpsellTitle]    = useState(s.productPageUpsellTitle ?? "Customers Also Bought");
+  const [upsellLimit,    setUpsellLimit]    = useState(s.productPageUpsellLimit ?? 3);
+  const [upsellProducts, setUpsellProducts] = useState(() => parseProducts(s.productPageUpsellProducts));
+
+  function snap() {
+    return JSON.stringify({ socialProofEnabled, socialProofText, socialProofMin, socialProofMax, socialProofInterval, scarcityEnabled, volumeTableEnabled, freebieTeaser, upsellEnabled, upsellTitle, upsellLimit, upsellProducts });
+  }
+  const savedSnap = useRef(snap());
+  const [isDirty, setIsDirty] = useState(false);
+
+  useEffect(() => { setIsDirty(snap() !== savedSnap.current); }, [
+    socialProofEnabled, socialProofText, socialProofMin, socialProofMax, socialProofInterval,
+    scarcityEnabled, volumeTableEnabled, freebieTeaser, upsellEnabled, upsellTitle, upsellLimit, upsellProducts,
+  ]);
+
+  useEffect(() => {
+    if (ppF.data?.success) { shopify.toast.show("Settings saved!"); savedSnap.current = snap(); setIsDirty(false); }
+  }, [ppF.data]);
+
+  function handleDiscard() {
+    setSocialProofEnabled(s.productPageSocialProofEnabled ?? false);
+    setSocialProofText(s.productPageSocialProofText ?? "🔥 {{count}} people bought this today");
+    setSocialProofMin(s.productPageSocialProofMin ?? 5); setSocialProofMax(s.productPageSocialProofMax ?? 30); setSocialProofInterval(s.productPageSocialProofInterval ?? 8);
+    setScarcityEnabled(s.productPageScarcityEnabled ?? false); setVolumeTableEnabled(s.productPageVolumeTableEnabled ?? false); setFreebieTeaser(s.productPageFreebieTeaser ?? false);
+    setUpsellEnabled(s.productPageUpsellEnabled ?? false); setUpsellTitle(s.productPageUpsellTitle ?? "Customers Also Bought"); setUpsellLimit(s.productPageUpsellLimit ?? 3);
+    setUpsellProducts(() => parseProducts(s.productPageUpsellProducts));
+  }
+
+  function handleSubmit() {
+    ppF.submit({
+      productPageSocialProofEnabled: String(socialProofEnabled), productPageSocialProofText: socialProofText,
+      productPageSocialProofMin: String(socialProofMin), productPageSocialProofMax: String(socialProofMax), productPageSocialProofInterval: String(socialProofInterval),
+      productPageScarcityEnabled: String(scarcityEnabled), productPageVolumeTableEnabled: String(volumeTableEnabled), productPageFreebieTeaser: String(freebieTeaser),
+      productPageUpsellEnabled: String(upsellEnabled), productPageUpsellTitle: upsellTitle, productPageUpsellLimit: String(upsellLimit), productPageUpsellProducts: JSON.stringify(upsellProducts),
+    }, { method: "POST", action: "/app/productpage" });
+  }
+
+  async function pickUpsellProducts() {
+    const selected = await shopify.resourcePicker({ type: "product", multiple: 6 });
+    if (!selected || selected.length === 0) return;
+    setUpsellProducts(selected.map(p => ({
+      id: p.id, title: p.title, handle: p.handle, imageUrl: p.images?.[0]?.originalSrc || "",
+      variantId: p.variants?.[0]?.id || "", price: p.variants?.[0]?.price ? Math.round(parseFloat(p.variants[0].price) * 100) : 0,
+    })));
+  }
+
+  const codeStyle = { background: "#f5f5f5", padding: "1px 5px", borderRadius: 4, fontSize: 12, fontFamily: "monospace" };
+
+  return (
+    <>
+      {isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}
+
+      <s-section>
+        <div style={{ padding: "12px 16px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, fontSize: 13, color: "#1e40af" }}>
+          <strong>How it works:</strong> These widgets inject automatically into any Shopify product page where EdgeCart is installed via the App Embed. They work across all themes — Dawn, Debut, Horizon, Minimal, and more.
+        </div>
+      </s-section>
+
+      {/* Social Proof */}
+      <s-section heading="Social Proof Notifications">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Social Proof" desc="Show a floating notification on product pages — e.g. '🔥 14 people bought this today' — to create urgency and trust." checked={socialProofEnabled} onChange={setSocialProofEnabled} />
+          {socialProofEnabled && (<>
+            <div>
+              <label style={labelStyle}>Message Template</label>
+              <input type="text" value={socialProofText} onChange={e => setSocialProofText(e.target.value)} style={inputStyle} placeholder="🔥 {{count}} people bought this today" />
+              <p style={helpText}>Use <code style={codeStyle}>{"{{count}}"}</code> for the random number. Try "👀 {"{{count}}"} people are viewing this right now".</p>
+            </div>
+            <div style={{ display: "flex", gap: 12 }}>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Min Count</label><input type="number" value={socialProofMin} min="1" onChange={e => setSocialProofMin(parseInt(e.target.value) || 5)} style={inputStyle} /></div>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Max Count</label><input type="number" value={socialProofMax} min="1" onChange={e => setSocialProofMax(parseInt(e.target.value) || 30)} style={inputStyle} /></div>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Interval (seconds)</label>
+                <input type="number" value={socialProofInterval} min="5" max="60" onChange={e => setSocialProofInterval(parseInt(e.target.value) || 8)} style={inputStyle} />
+                <p style={helpText}>How often a new notification appears.</p>
+              </div>
+            </div>
+            <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
+              <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 16px", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.1)", fontSize: 13, fontWeight: 600, color: "#111" }}>
+                {socialProofText.replace("{{count}}", String(Math.floor((socialProofMin + socialProofMax) / 2)))}
+              </div>
+            </div>
+          </>)}
+        </s-stack>
+      </s-section>
+
+      {/* Stock Scarcity Badge */}
+      <s-section heading="Stock Scarcity Badge">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Show Scarcity Badge on Product Pages" desc="Displays a low-stock warning below the Add to Cart button when inventory is low." checked={scarcityEnabled} onChange={setScarcityEnabled} />
+          {scarcityEnabled && (
+            <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>Badge text and threshold are configured in the <strong>Features</strong> tab → Stock Scarcity Badges.</p>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* Volume Discount Table */}
+      <s-section heading="Volume Discount Table">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Show Volume Discounts on Product Pages" desc="Display your buy-more-save-more tier table on every product page above the Add to Cart button." checked={volumeTableEnabled} onChange={setVolumeTableEnabled} />
+          {volumeTableEnabled && (
+            <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>Discount tiers are configured in the <strong>Features</strong> tab → Volume Discounts.</p>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* Free Gift Teaser */}
+      <s-section heading="Free Gift Teaser">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Show Free Gift Teaser on Product Pages" desc="Displays 'Add this item and you're $X away from a free gift!' below the ATC button to motivate customers." checked={freebieTeaser} onChange={setFreebieTeaser} />
+          {freebieTeaser && (
+            <>
+              <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
+                <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
+                <div style={{ padding: "10px 14px", background: "linear-gradient(135deg,#fffbeb,#fef3c7)", border: "1px solid #fde68a", borderRadius: 8, fontSize: 13, fontWeight: 600, color: "#92400e" }}>
+                  🎁 Add $20 more to unlock a free gift!
+                </div>
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>The amount shown is calculated live from the customer's cart vs your free gift threshold (configured in the Freebie page).</p>
+            </>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* Product Page Upsell */}
+      <s-section heading="Product Page Upsell">
+        <s-stack direction="block" gap="base">
+          <ToggleRow label="Enable Product Page Upsell" desc="Show a 'Customers Also Bought' product grid below the Add to Cart button. Uses Shopify AI recommendations by default." checked={upsellEnabled} onChange={setUpsellEnabled} />
+          {upsellEnabled && (<>
+            <div><label style={labelStyle}>Section Title</label><input type="text" value={upsellTitle} onChange={e => setUpsellTitle(e.target.value)} style={inputStyle} placeholder="Customers Also Bought" /></div>
+            <div>
+              <label style={labelStyle}>Max Products to Show (1–6)</label>
+              <input type="number" value={upsellLimit} min="1" max="6" onChange={e => setUpsellLimit(Math.min(6, Math.max(1, parseInt(e.target.value) || 3)))} style={{ ...inputStyle, width: 100 }} />
+            </div>
+            <div style={{ padding: "12px 14px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 10 }}>
+              <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "#111" }}>Product Source</p>
+              {upsellProducts.length === 0 ? (
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>Using <strong>Shopify AI Recommendations</strong> (automatically picks related products for each product page).</p>
+              ) : (
+                <p style={{ margin: "0 0 10px", fontSize: 13, color: "#6b7280" }}>Using <strong>{upsellProducts.length} manually selected product{upsellProducts.length > 1 ? "s" : ""}</strong>.</p>
+              )}
+              <button onClick={pickUpsellProducts} style={{ ...outlineBtn, marginRight: 10 }}>{upsellProducts.length > 0 ? "Change Products" : "Pick Manual Products"}</button>
+              {upsellProducts.length > 0 && (
+                <button onClick={() => setUpsellProducts([])} style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Use AI Instead</button>
+              )}
+            </div>
+            {upsellProducts.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                {upsellProducts.slice(0, upsellLimit).map(p => (
+                  <div key={p.id} style={{ border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+                    {p.imageUrl && <img src={p.imageUrl} alt={p.title} style={{ width: "100%", aspectRatio: "1", objectFit: "cover" }} />}
+                    <div style={{ padding: "8px 10px" }}>
+                      <p style={{ margin: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</p>
+                      <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6b7280" }}>{fmt(p.price)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>)}
+        </s-stack>
+      </s-section>
+    </>
   );
 }
 
@@ -804,7 +1453,7 @@ function AnalyticsTab({ data, loading, days, setDays }) {
         {periods.map((p) => (
           <button
             key={p.value}
-            onClick={() => setDays(p.value)}
+            onClick={() => setDays(p.value)}ð
             style={{
               padding: "6px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600,
               border: "none", cursor: "pointer",
@@ -1207,6 +1856,17 @@ function ToggleRow({ label, desc, checked, onChange }) {
         </span>
       </label>
     </div>
+  );
+}
+
+function ToggleInline({ checked, onChange }) {
+  return (
+    <label style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} style={{ display: "none" }} />
+      <span style={{ display: "inline-flex", width: 44, height: 24, borderRadius: 12, padding: 2, transition: "background 0.2s", alignItems: "center", background: checked ? "#008060" : "#ccc" }}>
+        <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.25)", transition: "transform 0.2s", display: "block", transform: checked ? "translateX(20px)" : "translateX(2px)" }} />
+      </span>
+    </label>
   );
 }
 

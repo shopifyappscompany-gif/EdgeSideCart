@@ -100,7 +100,8 @@ model CartSettings {
   aiUpsellLimit   Int     @default(4)
 
   // Multiple freebie offers (up to 5)
-  freebieOffers String @default("[]")
+  freebieOffers    String  @default("[]")
+  freebieShowAtTop Boolean @default(false)
 
   // Block /cart page — redirect to side cart instead
   blockCartPage Boolean @default(false)
@@ -184,6 +185,39 @@ model CartSettings {
   // Cart Share Link
   cartShareEnabled Boolean @default(false)
   cartShareText    String  @default("Share your cart")
+
+  // Cart Recovery / WhatsApp Share
+  cartRecoveryEnabled  Boolean @default(false)
+  cartRecoveryWhatsApp String  @default("")
+  cartRecoveryMessage  String  @default("Check out my cart: {{url}}")
+
+  // Delivery Date Estimator
+  deliveryEstimatorEnabled Boolean @default(false)
+  deliveryMinDays          Int     @default(3)
+  deliveryMaxDays          Int     @default(7)
+  deliveryMessage          String  @default("Estimated delivery: {{date_range}}")
+  deliveryCutoffHour       Int     @default(14)
+
+  // Rotating Announcements (cycles through messages in banner area)
+  announcementsEnabled  Boolean @default(false)
+  announcements         String  @default("[]")
+  announcementInterval  Int     @default(4)
+
+  // Product Page Features
+  productPageSocialProofEnabled  Boolean @default(false)
+  productPageSocialProofText     String  @default("🔥 {{count}} people bought this today")
+  productPageSocialProofMin      Int     @default(5)
+  productPageSocialProofMax      Int     @default(30)
+  productPageSocialProofInterval Int     @default(8)
+
+  productPageScarcityEnabled    Boolean @default(false)
+  productPageVolumeTableEnabled Boolean @default(false)
+  productPageFreebieTeaser      Boolean @default(false)
+
+  productPageUpsellEnabled   Boolean @default(false)
+  productPageUpsellTitle     String  @default("Customers Also Bought")
+  productPageUpsellLimit     Int     @default(3)
+  productPageUpsellProducts  String  @default("[]")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
