@@ -596,24 +596,56 @@ a.ec-item__title--link:hover {
    Cart Recovery / WhatsApp
    ---------------------------------------------------------- */
 .ec-recovery {
-  padding: 8px 20px 14px;
-  text-align: center;
+  padding: 10px 16px 14px;
 }
+.ec-recovery__label {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+.ec-recovery__row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.ec-recovery__phone {
+  flex: 1;
+  padding: 9px 12px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #111;
+  background: #fafafa;
+  outline: none;
+  font-family: inherit;
+  min-width: 0;
+}
+.ec-recovery__phone:focus { border-color: #25d366; }
 .ec-recovery__wa {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 20px;
+  gap: 5px;
+  padding: 9px 14px;
   background: #25d366;
   color: #fff;
+  border: none;
   border-radius: 8px;
-  text-decoration: none;
   font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
   transition: opacity 0.15s;
   font-family: inherit;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.ec-recovery__wa:hover { opacity: 0.85; }
+.ec-recovery__wa:hover:not(:disabled) { opacity: 0.85; }
+.ec-recovery__wa:disabled { opacity: 0.45; cursor: not-allowed; }
+.ec-recovery__hint {
+  margin: 5px 0 0;
+  font-size: 11px;
+  color: #9ca3af;
+}
 
 /* ----------------------------------------------------------
    Free Gift / Freebie
@@ -1887,74 +1919,219 @@ a.ec-item__title--link:hover {
   color: #92400e;
 }
 
-/* Product Page Upsell */
+/* ----------------------------------------------------------
+   Product Page Upsell — "Customers Also Bought"
+   ---------------------------------------------------------- */
 .ec-pp-upsell {
-  margin: 28px 0;
-  padding-top: 22px;
-  border-top: 1px solid #f3f4f6;
+  margin: 28px 0 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* ── Section heading ── */
+.ec-pp-upsell__header {
+  margin-bottom: 18px;
+  text-align: center;
+}
+.ec-pp-upsell__title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.ec-pp-upsell__title-icon {
+  font-size: 12px;
+  color: #bbb;
+  flex-shrink: 0;
 }
 .ec-pp-upsell__title {
-  margin: 0 0 16px;
-  font-size: 16px;
-  font-weight: 700;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
   color: #111;
+  letter-spacing: -0.2px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
-.ec-pp-upsell__grid {
+
+/* ── Card track — horizontal scroll on mobile, grid on desktop ── */
+.ec-pp-upsell__track {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
 }
-@media (max-width: 600px) {
-  .ec-pp-upsell__grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (max-width: 640px) {
+  .ec-pp-upsell__track {
+    display: flex;
+    gap: 14px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 4px 2px 8px;
+  }
+  .ec-pp-upsell__track::-webkit-scrollbar { display: none; }
 }
+
+/* ── Individual card ── */
 .ec-pp-upsell__card {
   display: flex;
   flex-direction: column;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #ececec;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.06);
+  transition: box-shadow 0.22s ease, transform 0.22s ease;
+  scroll-snap-align: start;
+  flex-shrink: 0;
+  position: relative;
 }
-.ec-pp-upsell__img-wrap { display: block; margin-bottom: 8px; }
+@media (max-width: 640px) {
+  .ec-pp-upsell__card { width: 155px; }
+}
+.ec-pp-upsell__card:hover {
+  box-shadow: 0 8px 28px rgba(0,0,0,0.13);
+  transform: translateY(-3px);
+}
+
+/* ── Product image ── */
+.ec-pp-upsell__img-wrap {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: #f5f5f5;
+  text-decoration: none;
+}
 .ec-pp-upsell__img {
   width: 100%;
   aspect-ratio: 1 / 1;
   object-fit: cover;
-  border-radius: 9px;
-  border: 1px solid #f0f0f0;
   display: block;
+  transition: transform 0.4s ease;
 }
-.ec-pp-upsell__img--placeholder {
+.ec-pp-upsell__card:hover .ec-pp-upsell__img {
+  transform: scale(1.06);
+}
+.ec-pp-upsell__img-ph {
   width: 100%;
   aspect-ratio: 1 / 1;
-  background: #f3f4f6;
-  border-radius: 9px;
+  background: linear-gradient(145deg, #f5f5f5, #eaeaea);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Discount badge ── */
+.ec-pp-upsell__disc-badge {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  background: #e53e3e;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.2px;
+  font-family: inherit;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(229,62,62,0.35);
+}
+
+/* ── Card body ── */
+.ec-pp-upsell__body {
+  padding: 12px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+}
+.ec-pp-upsell__name-link {
+  text-decoration: none;
 }
 .ec-pp-upsell__name {
-  margin: 0 0 3px;
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
   color: #111;
+  line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  transition: color 0.15s;
+}
+.ec-pp-upsell__name-link:hover .ec-pp-upsell__name { color: #555; }
+.ec-pp-upsell__pricing {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .ec-pp-upsell__price {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: #6b7280;
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 800;
+  color: #111;
 }
+.ec-pp-upsell__compare {
+  font-size: 12px;
+  color: #aaa;
+  text-decoration: line-through;
+  font-weight: 400;
+}
+
+/* ── Add to Cart button ── */
 .ec-pp-upsell__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   width: 100%;
-  padding: 9px 10px;
+  margin-top: auto;
+  padding: 11px 14px;
   background: var(--ec-primary, #111);
   color: #fff;
   border: none;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 600;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background 0.18s, opacity 0.15s, transform 0.1s;
   font-family: inherit;
-  line-height: 1.4;
+  line-height: 1;
+  letter-spacing: 0.1px;
 }
-.ec-pp-upsell__btn:hover   { opacity: 0.87; }
-.ec-pp-upsell__btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.ec-pp-upsell__btn:hover:not(:disabled) {
+  opacity: 0.87;
+  transform: scale(0.985);
+}
+.ec-pp-upsell__btn:active:not(:disabled) { transform: scale(0.97); }
+.ec-pp-upsell__btn:disabled { opacity: 0.48; cursor: not-allowed; }
+.ec-pp-upsell__cart-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* ── Dot pagination (mobile) ── */
+.ec-pp-upsell__dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+@media (min-width: 641px) { .ec-pp-upsell__dots { display: none; } }
+.ec-pp-upsell__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ddd;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+.ec-pp-upsell__dot--active {
+  background: var(--ec-primary, #111);
+  transform: scale(1.25);
+}

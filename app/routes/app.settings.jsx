@@ -1252,7 +1252,9 @@ function ProductPageTab({ settings: s, shopify }) {
     if (!selected || selected.length === 0) return;
     setUpsellProducts(selected.map(p => ({
       id: p.id, title: p.title, handle: p.handle, imageUrl: p.images?.[0]?.originalSrc || "",
-      variantId: p.variants?.[0]?.id || "", price: p.variants?.[0]?.price ? Math.round(parseFloat(p.variants[0].price) * 100) : 0,
+      variantId: p.variants?.[0]?.id || "",
+      price: p.variants?.[0]?.price ? Math.round(parseFloat(p.variants[0].price) * 100) : 0,
+      comparePrice: p.variants?.[0]?.compareAtPrice ? Math.round(parseFloat(p.variants[0].compareAtPrice) * 100) : 0,
     })));
   }
 

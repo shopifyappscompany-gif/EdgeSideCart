@@ -193,12 +193,12 @@ export default function UpsellSettings() {
         <s-stack direction="block" gap="base">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <strong style={{ fontSize: 14 }}>Enable Upsell</strong>
+              <strong style={{ fontSize: 14 }}>Enable Static Upsell</strong>
               <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
-                Show targeted product recommendations inside the side cart.
+                Hand-pick products to recommend in the side cart. Enabling this turns off AI Upsell.
               </p>
             </div>
-            <ToggleSwitch value={enabled} onChange={setEnabled} />
+            <ToggleSwitch value={enabled} onChange={(v) => { setEnabled(v); if (v) setAiEnabled(false); }} />
           </div>
 
           {enabled && (
@@ -344,10 +344,10 @@ export default function UpsellSettings() {
             <div>
               <strong style={{ fontSize: 14 }}>Enable AI Upsell</strong>
               <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
-                Shows below the static upsell section (or standalone if static is off).
+                Uses Shopify's recommendation engine. Enabling this turns off Static Upsell.
               </p>
             </div>
-            <ToggleSwitch value={aiEnabled} onChange={setAiEnabled} />
+            <ToggleSwitch value={aiEnabled} onChange={(v) => { setAiEnabled(v); if (v) setEnabled(false); }} />
           </div>
 
           {aiEnabled && (
@@ -400,10 +400,10 @@ export default function UpsellSettings() {
             <s-text fontWeight="bold">AI Upsell:</s-text> Shopify automatically picks products using purchase history and store trends. No manual selection needed.
           </s-paragraph>
           <s-paragraph>
-            Both can run at the same time — static upsell appears first, AI upsell below it.
+            Only one mode can be active at a time. Enabling one automatically disables the other.
           </s-paragraph>
           <s-paragraph>
-            <s-text fontWeight="bold">Tip:</s-text> Enable AI upsell as a fallback when the static list has no eligible products.
+            <s-text fontWeight="bold">Tip:</s-text> Use AI upsell if you don't want to maintain a manual product list. Use static upsell for full control over what's shown.
           </s-paragraph>
         </s-stack>
       </s-section>

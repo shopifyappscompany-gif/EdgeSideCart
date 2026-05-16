@@ -32,6 +32,7 @@
   var discountError      = "";
   var discountSuccess    = false;
   var discountInputValue = ""; /* preserves typed code while footer re-renders */
+  var waPhoneValue       = ""; /* preserves WhatsApp phone number across re-renders */
   var orderNote         = "";
   var aiRecommendations       = [];
   var aiRecommendationsFetching = false;
@@ -47,6 +48,7 @@
   var ecHandlingAdd        = false;
   var scarcityTimer        = null;
   var inventoryCache       = {};   /* keyed by variant_id — stores inventory_quantity */
+  var inventoryFetching    = {};   /* keyed by handle — prevents duplicate in-flight fetches */
   var cartShareToastTimer  = null;
   var orderSummaryOpen     = false;
   var announcementIndex    = 0;
@@ -801,56 +803,6 @@
       ].join("");
     }
 
-    /* Order Summary — BabyOrgano style: saved pill + collapsible detail */
-    if (settings.orderSummaryEnabled !== false) {
-      var autoDisc   = cart.original_total_price - cart.total_price - savings;
-      var totalSaved = (autoDisc > 0 ? autoDisc : 0) + savings;
-      var savingsPct = cart.original_total_price > 0
-        ? Math.round((totalSaved / cart.original_total_price) * 100) : 0;
-
-      var detailRows = [
-        autoDisc > 0 ? [
-          '<div class="ec-os__row"><span class="ec-os__row-label">MRP total</span><span class="ec-os__row-price">' + money(cart.original_total_price) + '</span></div>',
-          '<div class="ec-os__row"><span class="ec-os__row-label">Discount on MRP</span><span class="ec-os__row-green">−' + money(autoDisc) + '</span></div>',
-          '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
-        ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
-        savings > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(savings) + '</span></div>' : "",
-        '<div class="ec-os__row"><span class="ec-os__row-label">Shipping</span><span class="ec-os__row-free">FREE</span></div>',
-        totalSaved > 0 ? '<div class="ec-os__row ec-os__row--savings"><span class="ec-os__row-label">Total savings</span><span class="ec-os__row-green ec-os__row-green--bold">' + money(totalSaved) + '</span></div>' : "",
-        '<div class="ec-os__divider"></div>',
-        '<div class="ec-os__row ec-os__row--total"><span class="ec-os__row-total-label">Estimated Total</span><span class="ec-os__row-total-price">' + money(finalTotal) + '</span></div>',
-      ].join("");
-
-      html += [
-        '<div class="ec-os" id="ec-os">',
-          /* Green saved pill — only when savings exist */
-          totalSaved > 0 ? '<div class="ec-os__saved-bar">🎉 ' + money(totalSaved) + ' Saved so far!</div>' : "",
-          /* Toggle row — Estimated Total + price + % badge + chevron */
-          '<button class="ec-os__toggle" id="ec-os-toggle" type="button" aria-expanded="' + (orderSummaryOpen ? "true" : "false") + '">',
-            '<div class="ec-os__toggle-left">',
-              '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-              '<span class="ec-os__toggle-label">Estimated Total</span>',
-            '</div>',
-            '<div class="ec-os__toggle-right">',
-              totalSaved > 0 ? '<span class="ec-os__orig-price">' + money(cart.original_total_price) + '</span>' : "",
-              '<span class="ec-os__total-price">' + money(finalTotal) + '</span>',
-              savingsPct > 0 ? '<span class="ec-os__pct-badge">(' + savingsPct + '% OFF)</span>' : "",
-            '</div>',
-          '</button>',
-          /* Expandable detail panel */
-          '<div class="ec-os__panel' + (orderSummaryOpen ? " ec-os__panel--open" : "") + '" id="ec-os-panel">',
-            '<div class="ec-os__panel-inner">',
-              '<div class="ec-os__panel-header">',
-                '<span class="ec-os__panel-title">Order Summary</span>',
-                totalSaved > 0 ? '<span class="ec-os__panel-saved">' + money(totalSaved) + ' saved so far</span>' : "",
-              '</div>',
-              detailRows,
-            '</div>',
-          '</div>',
-        '</div>',
-      ].join("");
-    }
-
     /* Cart share link */
     if (settings.cartShareEnabled) html += buildCartShareHTML();
 
@@ -860,6 +812,54 @@
     if (checkoutBar) {
       var checkoutHtml = "";
       if (settings.deliveryEstimatorEnabled) checkoutHtml += buildDeliveryEstimatorHTML();
+
+      /* Order Summary — placed directly above the checkout button */
+      if (settings.orderSummaryEnabled !== false) {
+        var autoDisc2   = cart.original_total_price - cart.total_price - savings;
+        var totalSaved2 = (autoDisc2 > 0 ? autoDisc2 : 0) + savings;
+        var savingsPct2 = cart.original_total_price > 0
+          ? Math.round((totalSaved2 / cart.original_total_price) * 100) : 0;
+
+        var detailRows2 = [
+          autoDisc2 > 0 ? [
+            '<div class="ec-os__row"><span class="ec-os__row-label">MRP total</span><span class="ec-os__row-price">' + money(cart.original_total_price) + '</span></div>',
+            '<div class="ec-os__row"><span class="ec-os__row-label">Discount on MRP</span><span class="ec-os__row-green">−' + money(autoDisc2) + '</span></div>',
+            '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
+          ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
+          savings > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(savings) + '</span></div>' : "",
+          '<div class="ec-os__row"><span class="ec-os__row-label">Shipping</span><span class="ec-os__row-free">FREE</span></div>',
+          totalSaved2 > 0 ? '<div class="ec-os__row ec-os__row--savings"><span class="ec-os__row-label">Total savings</span><span class="ec-os__row-green ec-os__row-green--bold">' + money(totalSaved2) + '</span></div>' : "",
+          '<div class="ec-os__divider"></div>',
+          '<div class="ec-os__row ec-os__row--total"><span class="ec-os__row-total-label">Estimated Total</span><span class="ec-os__row-total-price">' + money(finalTotal) + '</span></div>',
+        ].join("");
+
+        checkoutHtml += [
+          '<div class="ec-os" id="ec-os">',
+            totalSaved2 > 0 ? '<div class="ec-os__saved-bar">🎉 ' + money(totalSaved2) + ' Saved so far!</div>' : "",
+            '<button class="ec-os__toggle" id="ec-os-toggle" type="button" aria-expanded="' + (orderSummaryOpen ? "true" : "false") + '">',
+              '<div class="ec-os__toggle-left">',
+                '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+                '<span class="ec-os__toggle-label">Estimated Total</span>',
+              '</div>',
+              '<div class="ec-os__toggle-right">',
+                totalSaved2 > 0 ? '<span class="ec-os__orig-price">' + money(cart.original_total_price) + '</span>' : "",
+                '<span class="ec-os__total-price">' + money(finalTotal) + '</span>',
+                savingsPct2 > 0 ? '<span class="ec-os__pct-badge">(' + savingsPct2 + '% OFF)</span>' : "",
+              '</div>',
+            '</button>',
+            '<div class="ec-os__panel' + (orderSummaryOpen ? " ec-os__panel--open" : "") + '" id="ec-os-panel">',
+              '<div class="ec-os__panel-inner">',
+                '<div class="ec-os__panel-header">',
+                  '<span class="ec-os__panel-title">Order Summary</span>',
+                  totalSaved2 > 0 ? '<span class="ec-os__panel-saved">' + money(totalSaved2) + ' saved so far</span>' : "",
+                '</div>',
+                detailRows2,
+              '</div>',
+            '</div>',
+          '</div>',
+        ].join("");
+      }
+
       checkoutHtml += '<button class="ec-checkout-btn" id="ec-checkout">Checkout · ' + money(finalTotal) + '</button>';
       if (settings.cartRecoveryEnabled) checkoutHtml += buildCartRecoveryHTML();
       if (settings.expressCheckoutEnabled) checkoutHtml += buildExpressCheckoutHTML();
@@ -903,6 +903,23 @@
     /* Bind checkout */
     var checkoutBtn = id("ec-checkout");
     if (checkoutBtn) on(checkoutBtn, "click", handleCheckout);
+
+    /* Bind WhatsApp cart recovery phone input */
+    var waPhoneInput = id("ec-wa-phone");
+    var waSendBtn    = id("ec-wa-send");
+    if (waPhoneInput && waSendBtn) {
+      on(waPhoneInput, "input", function () {
+        waPhoneValue = waPhoneInput.value;
+        var digits = waPhoneValue.replace(/[^0-9]/g, "");
+        waSendBtn.disabled = digits.length < 7;
+      });
+      on(waSendBtn, "click", function () {
+        var digits = waPhoneValue.replace(/[^0-9]/g, "");
+        if (digits.length < 7) return;
+        var msg = waSendBtn.getAttribute("data-msg") || "";
+        window.open("https://wa.me/" + digits + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
+      });
+    }
 
     /* Bind cart share */
     var shareBtn = id("ec-cart-share-btn");
@@ -1126,6 +1143,38 @@
     offers.forEach(function (offer) {
       if (offer.enabled && offer.productVariantId) syncOfferFreebie(offer);
     });
+    removeOrphanedFreebieItems();
+  }
+
+  /* Belt-and-suspenders: remove any cart item tagged _edge_cart_freebie that
+     no longer belongs to an enabled, unlocked offer. Catches edge cases where
+     syncOfferFreebie misses due to stale cart state or changed offer config. */
+  function removeOrphanedFreebieItems() {
+    if (!cart) return;
+    var offers = (settings && settings.freebieOffers) || [];
+    cart.items.forEach(function (item) {
+      if (!item.properties || item.properties._edge_cart_freebie !== "true") return;
+      var numId = String(item.variant_id);
+      /* Find the offer that owns this freebie variant */
+      var owningOffer = offers.find(function (o) {
+        return o.enabled && o.productVariantId && extractId(o.productVariantId) === numId;
+      });
+      /* Remove if: no offer owns it, offer is disabled, or offer threshold not met */
+      var shouldRemove = !owningOffer || !checkOffer(owningOffer);
+      if (shouldRemove) {
+        var syncKey = "orphan_" + item.key;
+        if (!freebieAutoSync[syncKey]) {
+          freebieAutoSync[syncKey] = true;
+          cartChange(item.key, 0)
+            .then(function () {
+              freebieAutoSync[syncKey] = false;
+              if (isOpen) render();
+              syncCartBadges();
+            })
+            .catch(function () { freebieAutoSync[syncKey] = false; });
+        }
+      }
+    });
   }
 
   function syncOfferFreebie(offer) {
@@ -1331,9 +1380,16 @@
     var cartUrl = "https://" + window.location.hostname + "/cart/" +
       cart.items.map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
     var msg = (settings.cartRecoveryMessage || "Check out my cart: {{url}}").replace("{{url}}", cartUrl);
-    var waPhone = (settings.cartRecoveryWhatsApp || "").replace(/[^0-9]/g, "");
-    var waUrl = "https://wa.me/" + (waPhone || "") + "?text=" + encodeURIComponent(msg);
-    return '<div class="ec-recovery"><a class="ec-recovery__wa" href="' + esc(waUrl) + '" target="_blank" rel="noopener">💬 Share on WhatsApp</a></div>';
+    return [
+      '<div class="ec-recovery">',
+        '<p class="ec-recovery__label">💬 Send cart link via WhatsApp</p>',
+        '<div class="ec-recovery__row">',
+          '<input class="ec-recovery__phone" id="ec-wa-phone" type="tel" value="' + esc(waPhoneValue) + '" placeholder="Enter phone number (e.g. 919876543210)" />',
+          '<button class="ec-recovery__wa" id="ec-wa-send" data-msg="' + esc(msg) + '"' + (waPhoneValue.replace(/[^0-9]/g,"").length >= 7 ? "" : " disabled") + '>Send</button>',
+        '</div>',
+        '<p class="ec-recovery__hint">Include country code, no + or spaces (e.g. 919876543210)</p>',
+      '</div>',
+    ].join("");
   }
 
   /* ── Delivery Date Estimator ─────────────────────────────── */
@@ -1461,19 +1517,57 @@
       if (isFreebieItem(item)) return;
       if (inventoryCache[item.variant_id] !== undefined) return;
       if (!item.handle) return;
+      if (inventoryFetching[item.handle]) return;
+      inventoryFetching[item.handle] = true;
       fetched = true;
-      fetch("/products/" + item.handle + ".js", { credentials: "same-origin" })
+      var handle = item.handle;
+      fetch("/products/" + handle + ".js", { credentials: "same-origin" })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
+          delete inventoryFetching[handle];
           if (!data || !data.variants) return;
           data.variants.forEach(function (v) {
-            inventoryCache[v.id] = v.inventory_management ? v.inventory_quantity : null;
+            inventoryCache[v.id] = v.inventory_management === "shopify" ? v.inventory_quantity : null;
           });
-          if (isOpen) renderBody();
+          /* Surgical patch — only touch badge nodes, never rebuild the whole body */
+          if (isOpen) patchScarcityBadges();
         })
-        .catch(function () {});
+        .catch(function () { delete inventoryFetching[handle]; });
     });
     return fetched;
+  }
+
+  /* Update only the scarcity badge <span> inside each rendered line item.
+     Avoids replacing body.innerHTML (which causes the visible "shake"). */
+  function patchScarcityBadges() {
+    var body = id("ec-body");
+    if (!body || !cart || !settings) return;
+    var threshold = parseInt(settings.stockScarcityThreshold) || 5;
+    var template  = settings.stockScarcityText || "Only {{count}} left!";
+    cart.items.forEach(function (item) {
+      if (isFreebieItem(item)) return;
+      var itemEl = body.querySelector('.ec-item[data-key="' + item.key + '"]');
+      if (!itemEl) return;
+      var info     = itemEl.querySelector(".ec-item__info");
+      if (!info) return;
+      var existing = info.querySelector(".ec-item__scarcity");
+      var invQty   = inventoryCache[item.variant_id];
+      var show     = invQty !== undefined && invQty !== null &&
+                     typeof invQty === "number" && invQty > 0 && invQty <= threshold;
+      if (show) {
+        var txt = template.replace("{{count}}", String(invQty));
+        if (existing) {
+          if (existing.textContent !== txt) existing.textContent = txt;
+        } else {
+          var badge = document.createElement("span");
+          badge.className = "ec-item__scarcity";
+          badge.textContent = txt;
+          info.appendChild(badge);
+        }
+      } else {
+        if (existing) existing.remove();
+      }
+    });
   }
 
   /* ── Sticky Add-to-Cart ──────────────────────────────────── */
@@ -1552,6 +1646,35 @@
     return document.querySelector('form[action*="/cart/add"], form[action="/cart/add"]');
   }
 
+  /* Find the last element that should appear before our injection:
+     the ATC form itself, plus any Buy Now / payment buttons that follow it
+     in the same parent container (Dawn, Debut, Impulse, etc.). */
+  function findInsertionAnchor() {
+    var form = findAtcForm();
+    if (!form) return null;
+    var parent  = form.parentNode;
+    var anchor  = form;
+    /* Walk up to 8 next siblings, grab the last payment/checkout-related one */
+    var sibling = form.nextElementSibling;
+    var steps   = 0;
+    while (sibling && steps < 8) {
+      var tag = sibling.tagName.toLowerCase();
+      var cls = (sibling.className || "").toLowerCase();
+      var isPayment =
+        tag === "payment-button" ||
+        tag === "shopify-payment-button" ||
+        cls.indexOf("payment") !== -1 ||
+        cls.indexOf("buy-now") !== -1 ||
+        cls.indexOf("dynamic-checkout") !== -1 ||
+        cls.indexOf("shopify-payment-button") !== -1 ||
+        sibling.querySelector(".shopify-payment-button, payment-button, [data-shopify='payment-button']");
+      if (isPayment) anchor = sibling;
+      sibling = sibling.nextElementSibling;
+      steps++;
+    }
+    return { anchor: anchor, parent: parent };
+  }
+
   /* Insert element immediately after the ATC form */
   function insertAfterAtc(html) {
     var form = findAtcForm();
@@ -1585,9 +1708,11 @@
     var max      = settings.productPageSocialProofMax      || 30;
     var interval = (settings.productPageSocialProofInterval || 8) * 1000;
     var template = settings.productPageSocialProofText || "🔥 {{count}} people bought this today";
+    var count    = Math.floor(Math.random() * (max - min + 1)) + min;
 
     function showProof() {
-      var count = Math.floor(Math.random() * (max - min + 1)) + min;
+      count += 1;
+      if (count > max) count = min + Math.floor(Math.random() * 3);
       toast.textContent = template.replace("{{count}}", count);
       toast.classList.add("ec-sp-toast--visible");
       setTimeout(function () { toast.classList.remove("ec-sp-toast--visible"); }, 3500);
@@ -1614,7 +1739,7 @@
                      || product.variants[0];
         if (!variant) return;
         var qty = variant.inventory_quantity;
-        if (variant.inventory_management !== "shopify" || qty === null || qty > threshold || qty <= 0) return;
+        if (variant.inventory_management !== "shopify" || qty == null || typeof qty !== "number" || qty > threshold || qty <= 0) return;
         var badge = document.createElement("div");
         badge.className = "ec-pp-scarcity";
         badge.innerHTML = "⚠️ " + esc(template.replace("{{count}}", qty));
@@ -1695,11 +1820,12 @@
         var products = data.products.slice(0, limit).map(function (p) {
           var v = p.variants && p.variants[0];
           return {
-            title:     p.title,
-            handle:    p.handle,
-            imageUrl:  p.images && p.images[0] ? p.images[0].src : "",
-            price:     v ? Math.round(parseFloat(v.price) * 100) : (p.price * 100),
-            variantId: v ? v.id : null,
+            title:        p.title,
+            handle:       p.handle,
+            imageUrl:     p.images && p.images[0] ? p.images[0].src : "",
+            price:        v ? (v.price || 0) : (p.price || 0),
+            comparePrice: v && v.compare_at_price > v.price ? v.compare_at_price : 0,
+            variantId:    v ? v.id : null,
           };
         });
         renderProductPageUpsell(title, products);
@@ -1709,35 +1835,88 @@
 
   function renderProductPageUpsell(title, products) {
     if (!products.length) return;
+    if (document.getElementById("ec-pp-upsell")) return; /* already injected */
 
-    var html = '<div class="ec-pp-upsell" id="ec-pp-upsell">';
-    html += '<p class="ec-pp-upsell__title">' + esc(title) + '</p>';
-    html += '<div class="ec-pp-upsell__grid">';
-    products.forEach(function (p) {
-      var href = "/products/" + (p.handle || "");
-      var img  = p.imageUrl
+    var cards = products.map(function (p) {
+      var href  = "/products/" + (p.handle || "");
+      var disc  = p.comparePrice && p.comparePrice > p.price
+        ? Math.round((1 - p.price / p.comparePrice) * 100) : 0;
+      var imgHtml = p.imageUrl
         ? '<img class="ec-pp-upsell__img" src="' + esc(p.imageUrl) + '" alt="' + esc(p.title) + '" loading="lazy">'
-        : '<div class="ec-pp-upsell__img ec-pp-upsell__img--placeholder"></div>';
-      html += '<div class="ec-pp-upsell__card">'
-            + '<a href="' + esc(href) + '" class="ec-pp-upsell__img-wrap">' + img + '</a>'
-            + '<p class="ec-pp-upsell__name">' + esc(p.title) + '</p>'
-            + '<p class="ec-pp-upsell__price">' + money(p.price) + '</p>'
-            + '<button class="ec-pp-upsell__btn" data-vid="' + esc(String(p.variantId || "")) + '">Add to Cart</button>'
-            + '</div>';
-    });
-    html += '</div></div>';
+        : '<div class="ec-pp-upsell__img-ph"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ccc" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>';
+      return [
+        '<div class="ec-pp-upsell__card">',
+          '<a href="' + esc(href) + '" class="ec-pp-upsell__img-wrap">',
+            imgHtml,
+            disc > 0 ? '<span class="ec-pp-upsell__disc-badge">−' + disc + '%</span>' : "",
+          '</a>',
+          '<div class="ec-pp-upsell__body">',
+            '<a href="' + esc(href) + '" class="ec-pp-upsell__name-link">',
+              '<p class="ec-pp-upsell__name">' + esc(p.title) + '</p>',
+            '</a>',
+            '<div class="ec-pp-upsell__pricing">',
+              '<span class="ec-pp-upsell__price">' + money(p.price) + '</span>',
+              disc > 0 ? '<span class="ec-pp-upsell__compare">' + money(p.comparePrice) + '</span>' : "",
+            '</div>',
+            '<button class="ec-pp-upsell__btn" data-vid="' + esc(String(p.variantId || "")) + '">',
+              '<svg class="ec-pp-upsell__cart-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>',
+              '<span>Add to Cart</span>',
+            '</button>',
+          '</div>',
+        '</div>',
+      ].join("");
+    }).join("");
 
-    /* Find best injection point: after the ATC form, or after the product section */
-    var form = findAtcForm();
-    var injected = false;
-    if (form) {
+    var html = [
+      '<div class="ec-pp-upsell" id="ec-pp-upsell">',
+        '<div class="ec-pp-upsell__header">',
+          '<div class="ec-pp-upsell__title-row">',
+            '<span class="ec-pp-upsell__title-icon">✦</span>',
+            '<h3 class="ec-pp-upsell__title">' + esc(title) + '</h3>',
+            '<span class="ec-pp-upsell__title-icon">✦</span>',
+          '</div>',
+        '</div>',
+        '<div class="ec-pp-upsell__track" id="ec-pp-upsell-track">',
+          cards,
+        '</div>',
+        '<div class="ec-pp-upsell__dots" id="ec-pp-upsell-dots"></div>',
+      '</div>',
+    ].join("");
+
+    /* Inject below ATC form AND any Buy Now / payment buttons */
+    var anchor = findInsertionAnchor();
+    if (anchor) {
       var wrap = document.createElement("div");
       wrap.innerHTML = html;
-      form.parentNode.insertBefore(wrap.firstChild, form.nextSibling);
-      injected = true;
-    }
-    if (!injected) {
+      anchor.parent.insertBefore(wrap.firstChild, anchor.anchor.nextSibling);
+    } else {
       document.body.insertAdjacentHTML("beforeend", html);
+    }
+
+    /* Dot pagination for mobile */
+    var track     = document.getElementById("ec-pp-upsell-track");
+    var dotsWrap  = document.getElementById("ec-pp-upsell-dots");
+    if (track && dotsWrap && products.length > 1) {
+      products.forEach(function (_, i) {
+        var dot = document.createElement("button");
+        dot.className = "ec-pp-upsell__dot" + (i === 0 ? " ec-pp-upsell__dot--active" : "");
+        dot.setAttribute("aria-label", "Go to slide " + (i + 1));
+        dotsWrap.appendChild(dot);
+        dot.addEventListener("click", function () {
+          var cards2 = track.querySelectorAll(".ec-pp-upsell__card");
+          if (cards2[i]) cards2[i].scrollIntoView({ behavior: "smooth", block: "nearest", inline: "start" });
+        });
+      });
+      track.addEventListener("scroll", function () {
+        var dots2 = dotsWrap.querySelectorAll(".ec-pp-upsell__dot");
+        var cards2 = track.querySelectorAll(".ec-pp-upsell__card");
+        var closest = 0, minDist = Infinity;
+        cards2.forEach(function (c, i) {
+          var dist = Math.abs(c.getBoundingClientRect().left - track.getBoundingClientRect().left);
+          if (dist < minDist) { minDist = dist; closest = i; }
+        });
+        dots2.forEach(function (d, i) { d.classList.toggle("ec-pp-upsell__dot--active", i === closest); });
+      });
     }
 
     /* Bind Add to Cart buttons */
@@ -1747,18 +1926,20 @@
       btn.addEventListener("click", function () {
         var vid = btn.getAttribute("data-vid");
         if (!vid) return;
-        btn.disabled    = true;
-        btn.textContent = "Adding…";
+        btn.disabled = true;
+        btn.querySelector("span").textContent = "Adding…";
         cartAdd(vid, 1, {})
           .then(function (item) {
             handlePostAdd(item, true);
-            btn.textContent = "Added ✓";
+            btn.querySelector("span").textContent = "Added ✓";
           })
-          .catch(function () { btn.textContent = "Add to Cart"; })
+          .catch(function () {
+            var s = btn.querySelector("span"); if (s) s.textContent = "Add to Cart";
+          })
           .finally(function () {
             setTimeout(function () {
-              btn.disabled    = false;
-              btn.textContent = "Add to Cart";
+              btn.disabled = false;
+              var s = btn.querySelector("span"); if (s) s.textContent = "Add to Cart";
             }, 2000);
           });
       });
