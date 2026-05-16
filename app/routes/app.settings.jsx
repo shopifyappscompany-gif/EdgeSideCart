@@ -852,7 +852,7 @@ function FeaturesTab({ settings: s, shopify }) {
   const [cartShareEnabled, setCartShareEnabled] = useState(s.cartShareEnabled ?? false);
   const [cartShareText,    setCartShareText]    = useState(s.cartShareText ?? "Share your cart");
   const [cartRecoveryEnabled,  setCartRecoveryEnabled]  = useState(s.cartRecoveryEnabled ?? false);
-  const [cartRecoveryWhatsApp, setCartRecoveryWhatsApp] = useState(s.cartRecoveryWhatsApp ?? "");
+  const [cartRecoveryLabel,    setCartRecoveryLabel]    = useState(s.cartRecoveryLabel ?? "💬 Send cart link via WhatsApp");
   const [cartRecoveryMessage,  setCartRecoveryMessage]  = useState(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
   const [deliveryEstimatorEnabled, setDeliveryEstimatorEnabled] = useState(s.deliveryEstimatorEnabled ?? false);
   const [deliveryMinDays,          setDeliveryMinDays]          = useState(s.deliveryMinDays ?? 3);
@@ -870,7 +870,7 @@ function FeaturesTab({ settings: s, shopify }) {
       stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
       recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
       cartShareEnabled, cartShareText,
-      cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+      cartRecoveryEnabled, cartRecoveryLabel, cartRecoveryMessage,
       deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
     });
   }
@@ -886,7 +886,7 @@ function FeaturesTab({ settings: s, shopify }) {
     stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
     recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
     cartShareEnabled, cartShareText,
-    cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+    cartRecoveryEnabled, cartRecoveryLabel, cartRecoveryMessage,
     deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
   ]);
 
@@ -912,7 +912,7 @@ function FeaturesTab({ settings: s, shopify }) {
     setStockScarcityEnabled(s.stockScarcityEnabled ?? false); setStockScarcityThreshold(s.stockScarcityThreshold ?? 5); setStockScarcityText(s.stockScarcityText ?? "Only {{count}} left!");
     setRecentlyViewedEnabled(s.recentlyViewedEnabled ?? false); setRecentlyViewedTitle(s.recentlyViewedTitle ?? "You might also like"); setRecentlyViewedLimit(s.recentlyViewedLimit ?? 4);
     setCartShareEnabled(s.cartShareEnabled ?? false); setCartShareText(s.cartShareText ?? "Share your cart");
-    setCartRecoveryEnabled(s.cartRecoveryEnabled ?? false); setCartRecoveryWhatsApp(s.cartRecoveryWhatsApp ?? ""); setCartRecoveryMessage(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
+    setCartRecoveryEnabled(s.cartRecoveryEnabled ?? false); setCartRecoveryLabel(s.cartRecoveryLabel ?? "💬 Send cart link via WhatsApp"); setCartRecoveryMessage(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
     setDeliveryEstimatorEnabled(s.deliveryEstimatorEnabled ?? false); setDeliveryMinDays(s.deliveryMinDays ?? 3); setDeliveryMaxDays(s.deliveryMaxDays ?? 7);
     setDeliveryMessage(s.deliveryMessage ?? "Estimated delivery: {{date_range}}"); setDeliveryCutoffHour(s.deliveryCutoffHour ?? 14);
   }
@@ -932,7 +932,7 @@ function FeaturesTab({ settings: s, shopify }) {
       stockScarcityEnabled: String(stockScarcityEnabled), stockScarcityThreshold: String(stockScarcityThreshold), stockScarcityText,
       recentlyViewedEnabled: String(recentlyViewedEnabled), recentlyViewedTitle, recentlyViewedLimit: String(recentlyViewedLimit),
       cartShareEnabled: String(cartShareEnabled), cartShareText,
-      cartRecoveryEnabled: String(cartRecoveryEnabled), cartRecoveryWhatsApp, cartRecoveryMessage,
+      cartRecoveryEnabled: String(cartRecoveryEnabled), cartRecoveryLabel, cartRecoveryMessage,
       deliveryEstimatorEnabled: String(deliveryEstimatorEnabled), deliveryMinDays: String(deliveryMinDays), deliveryMaxDays: String(deliveryMaxDays),
       deliveryMessage, deliveryCutoffHour: String(deliveryCutoffHour),
     }, { method: "POST", action: "/app/features" });
@@ -1158,17 +1158,20 @@ function FeaturesTab({ settings: s, shopify }) {
       <s-section heading="Cart Recovery & WhatsApp Share">
         <s-stack direction="block" gap="base">
           <ToggleRow label="Enable Cart Recovery" desc="Show a WhatsApp share button so customers can send their cart link to themselves or a friend." checked={cartRecoveryEnabled} onChange={setCartRecoveryEnabled} />
-          {cartRecoveryEnabled && (<>
-            <div>
-              <label style={labelStyle}>WhatsApp Phone Number (optional)</label>
-              <input type="text" value={cartRecoveryWhatsApp} onChange={e => setCartRecoveryWhatsApp(e.target.value.replace(/[^0-9]/g, ""))} style={inputStyle} placeholder="919876543210 (country code + number, no +)" />
+          {cartRecoveryEnabled && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label style={labelStyle}>Section Label</label>
+                <input type="text" value={cartRecoveryLabel} onChange={e => setCartRecoveryLabel(e.target.value)} style={inputStyle} placeholder="💬 Send cart link via WhatsApp" />
+                <p style={helpText}>This text appears above the phone input in the side cart.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Message Template</label>
+                <input type="text" value={cartRecoveryMessage} onChange={e => setCartRecoveryMessage(e.target.value)} style={inputStyle} placeholder="Check out my cart: {{url}}" />
+                <p style={helpText}>Use <code style={codeStyle}>{"{{url}}"}</code> to insert the cart permalink automatically. Customers enter their own phone number in the side cart.</p>
+              </div>
             </div>
-            <div>
-              <label style={labelStyle}>Message Template</label>
-              <input type="text" value={cartRecoveryMessage} onChange={e => setCartRecoveryMessage(e.target.value)} style={inputStyle} placeholder="Check out my cart: {{url}}" />
-              <p style={helpText}>Use <code style={codeStyle}>{"{{url}}"}</code> to insert the cart permalink automatically.</p>
-            </div>
-          </>)}
+          )}
         </s-stack>
       </s-section>
 

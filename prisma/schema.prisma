@@ -190,6 +190,7 @@ model CartSettings {
   cartRecoveryEnabled  Boolean @default(false)
   cartRecoveryWhatsApp String  @default("")
   cartRecoveryMessage  String  @default("Check out my cart: {{url}}")
+  cartRecoveryLabel    String  @default("💬 Send cart link via WhatsApp")
 
   // Delivery Date Estimator
   deliveryEstimatorEnabled Boolean @default(false)

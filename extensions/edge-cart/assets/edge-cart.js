@@ -32,7 +32,8 @@
   var discountError      = "";
   var discountSuccess    = false;
   var discountInputValue = ""; /* preserves typed code while footer re-renders */
-  var waPhoneValue       = ""; /* preserves WhatsApp phone number across re-renders */
+  var waDialCode         = "1";  /* selected country dial code (no +) */
+  var waLocalNumber      = "";   /* local part of phone entered by customer */
   var orderNote         = "";
   var aiRecommendations       = [];
   var aiRecommendationsFetching = false;
@@ -904,20 +905,25 @@
     var checkoutBtn = id("ec-checkout");
     if (checkoutBtn) on(checkoutBtn, "click", handleCheckout);
 
-    /* Bind WhatsApp cart recovery phone input */
-    var waPhoneInput = id("ec-wa-phone");
+    /* Bind WhatsApp cart recovery — country code select + local number input */
+    var waCcSelect   = id("ec-wa-cc");
+    var waNumInput   = id("ec-wa-num");
     var waSendBtn    = id("ec-wa-send");
-    if (waPhoneInput && waSendBtn) {
-      on(waPhoneInput, "input", function () {
-        waPhoneValue = waPhoneInput.value;
-        var digits = waPhoneValue.replace(/[^0-9]/g, "");
-        waSendBtn.disabled = digits.length < 7;
+    if (waCcSelect && waNumInput && waSendBtn) {
+      on(waCcSelect, "change", function () {
+        waDialCode = waCcSelect.value;
+      });
+      on(waNumInput, "input", function () {
+        waLocalNumber = waNumInput.value;
+        var digits = waLocalNumber.replace(/[^0-9]/g, "");
+        waSendBtn.disabled = digits.length < 6;
       });
       on(waSendBtn, "click", function () {
-        var digits = waPhoneValue.replace(/[^0-9]/g, "");
-        if (digits.length < 7) return;
+        var digits = waLocalNumber.replace(/[^0-9]/g, "");
+        if (digits.length < 6) return;
+        var fullNumber = waDialCode + digits;
         var msg = waSendBtn.getAttribute("data-msg") || "";
-        window.open("https://wa.me/" + digits + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
+        window.open("https://wa.me/" + fullNumber + "?text=" + encodeURIComponent(msg), "_blank", "noopener");
       });
     }
 
@@ -1376,18 +1382,49 @@
   }
 
   /* ── Cart Recovery / WhatsApp Share ─────────────────────── */
+  var COUNTRIES = [
+    ["🇺🇸","United States","1"],["🇬🇧","United Kingdom","44"],["🇮🇳","India","91"],
+    ["🇦🇺","Australia","61"],["🇨🇦","Canada","1"],["🇩🇪","Germany","49"],
+    ["🇫🇷","France","33"],["🇪🇸","Spain","34"],["🇮🇹","Italy","39"],
+    ["🇧🇷","Brazil","55"],["🇲🇽","Mexico","52"],["🇦🇷","Argentina","54"],
+    ["🇯🇵","Japan","81"],["🇰🇷","South Korea","82"],["🇨🇳","China","86"],
+    ["🇸🇬","Singapore","65"],["🇦🇪","UAE","971"],["🇸🇦","Saudi Arabia","966"],
+    ["🇿🇦","South Africa","27"],["🇳🇬","Nigeria","234"],["🇰🇪","Kenya","254"],
+    ["🇳🇱","Netherlands","31"],["🇧🇪","Belgium","32"],["🇨🇭","Switzerland","41"],
+    ["🇸🇪","Sweden","46"],["🇳🇴","Norway","47"],["🇩🇰","Denmark","45"],
+    ["🇫🇮","Finland","358"],["🇵🇱","Poland","48"],["🇵🇹","Portugal","351"],
+    ["🇬🇷","Greece","30"],["🇹🇷","Turkey","90"],["🇷🇺","Russia","7"],
+    ["🇺🇦","Ukraine","380"],["🇮🇱","Israel","972"],["🇵🇰","Pakistan","92"],
+    ["🇧🇩","Bangladesh","880"],["🇱🇰","Sri Lanka","94"],["🇳🇵","Nepal","977"],
+    ["🇮🇩","Indonesia","62"],["🇲🇾","Malaysia","60"],["🇵🇭","Philippines","63"],
+    ["🇹🇭","Thailand","66"],["🇻🇳","Vietnam","84"],["🇳🇿","New Zealand","64"],
+    ["🇮🇪","Ireland","353"],["🇦🇹","Austria","43"],["🇨🇿","Czech Republic","420"],
+    ["🇭🇺","Hungary","36"],["🇷🇴","Romania","40"],["🇪🇬","Egypt","20"],
+    ["🇲🇦","Morocco","212"],["🇨🇴","Colombia","57"],["🇨🇱","Chile","56"],
+    ["🇵🇪","Peru","51"],["🇭🇰","Hong Kong","852"],["🇹🇼","Taiwan","886"],
+  ];
+
+  function buildCountryOptions() {
+    return COUNTRIES.map(function (c) {
+      var selected = c[2] === waDialCode ? " selected" : "";
+      return '<option value="' + c[2] + '"' + selected + '>' + c[0] + ' ' + c[1] + ' (+' + c[2] + ')</option>';
+    }).join("");
+  }
+
   function buildCartRecoveryHTML() {
     var cartUrl = "https://" + window.location.hostname + "/cart/" +
       cart.items.map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
     var msg = (settings.cartRecoveryMessage || "Check out my cart: {{url}}").replace("{{url}}", cartUrl);
+    var localDigits = waLocalNumber.replace(/[^0-9]/g, "");
+    var canSend     = localDigits.length >= 6;
     return [
       '<div class="ec-recovery">',
-        '<p class="ec-recovery__label">💬 Send cart link via WhatsApp</p>',
+        '<p class="ec-recovery__label">' + esc(settings.cartRecoveryLabel || "💬 Send cart link via WhatsApp") + '</p>',
         '<div class="ec-recovery__row">',
-          '<input class="ec-recovery__phone" id="ec-wa-phone" type="tel" value="' + esc(waPhoneValue) + '" placeholder="Enter phone number (e.g. 919876543210)" />',
-          '<button class="ec-recovery__wa" id="ec-wa-send" data-msg="' + esc(msg) + '"' + (waPhoneValue.replace(/[^0-9]/g,"").length >= 7 ? "" : " disabled") + '>Send</button>',
+          '<select class="ec-recovery__cc" id="ec-wa-cc">' + buildCountryOptions() + '</select>',
+          '<input class="ec-recovery__phone" id="ec-wa-num" type="tel" value="' + esc(waLocalNumber) + '" placeholder="Phone number" />',
+          '<button class="ec-recovery__wa" id="ec-wa-send" data-msg="' + esc(msg) + '"' + (canSend ? "" : " disabled") + '>Send</button>',
         '</div>',
-        '<p class="ec-recovery__hint">Include country code, no + or spaces (e.g. 919876543210)</p>',
       '</div>',
     ].join("");
   }

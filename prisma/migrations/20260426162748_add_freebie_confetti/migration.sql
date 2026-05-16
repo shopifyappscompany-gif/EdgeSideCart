@@ -1,1 +1,1 @@
-ALTER TABLE "CartSettings" ADD COLUMN IF NOT EXISTS "freebieConfettiEnabled" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "CartSettings" ADD COLUMN "freebieConfettiEnabled" BOOLEAN NOT NULL DEFAULT true;

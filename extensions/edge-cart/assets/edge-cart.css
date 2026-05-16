@@ -606,9 +606,26 @@ a.ec-item__title--link:hover {
 }
 .ec-recovery__row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: stretch;
 }
+/* Country code select */
+.ec-recovery__cc {
+  flex: 0 0 auto;
+  max-width: 140px;
+  padding: 9px 8px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #111;
+  background: #fafafa;
+  outline: none;
+  font-family: inherit;
+  cursor: pointer;
+  appearance: auto;
+}
+.ec-recovery__cc:focus { border-color: #25d366; }
+/* Local phone number input */
 .ec-recovery__phone {
   flex: 1;
   padding: 9px 12px;
@@ -622,6 +639,7 @@ a.ec-item__title--link:hover {
   min-width: 0;
 }
 .ec-recovery__phone:focus { border-color: #25d366; }
+/* Send button */
 .ec-recovery__wa {
   display: inline-flex;
   align-items: center;
@@ -641,11 +659,6 @@ a.ec-item__title--link:hover {
 }
 .ec-recovery__wa:hover:not(:disabled) { opacity: 0.85; }
 .ec-recovery__wa:disabled { opacity: 0.45; cursor: not-allowed; }
-.ec-recovery__hint {
-  margin: 5px 0 0;
-  font-size: 11px;
-  color: #9ca3af;
-}
 
 /* ----------------------------------------------------------
    Free Gift / Freebie

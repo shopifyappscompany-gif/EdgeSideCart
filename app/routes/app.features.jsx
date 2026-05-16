@@ -58,6 +58,7 @@ export const action = async ({ request }) => {
 
     cartRecoveryEnabled:  form.get("cartRecoveryEnabled") === "true",
     cartRecoveryWhatsApp: String(form.get("cartRecoveryWhatsApp") || ""),
+    cartRecoveryLabel:    String(form.get("cartRecoveryLabel") || "💬 Send cart link via WhatsApp"),
     cartRecoveryMessage:  String(form.get("cartRecoveryMessage") || "Check out my cart: {{url}}"),
 
     deliveryEstimatorEnabled: form.get("deliveryEstimatorEnabled") === "true",
@@ -145,7 +146,7 @@ export default function FeaturesPage() {
   const [cartShareText,    setCartShareText]    = useState(s.cartShareText ?? "Share your cart");
 
   const [cartRecoveryEnabled,  setCartRecoveryEnabled]  = useState(s.cartRecoveryEnabled ?? false);
-  const [cartRecoveryWhatsApp, setCartRecoveryWhatsApp] = useState(s.cartRecoveryWhatsApp ?? "");
+  const [cartRecoveryLabel,    setCartRecoveryLabel]    = useState(s.cartRecoveryLabel ?? "💬 Send cart link via WhatsApp");
   const [cartRecoveryMessage,  setCartRecoveryMessage]  = useState(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
 
   const [deliveryEstimatorEnabled, setDeliveryEstimatorEnabled] = useState(s.deliveryEstimatorEnabled ?? false);
@@ -165,7 +166,7 @@ export default function FeaturesPage() {
       stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
       recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
       cartShareEnabled, cartShareText,
-      cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+      cartRecoveryEnabled, cartRecoveryLabel, cartRecoveryMessage,
       deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
     });
   }
@@ -185,7 +186,7 @@ export default function FeaturesPage() {
     stockScarcityEnabled, stockScarcityThreshold, stockScarcityText,
     recentlyViewedEnabled, recentlyViewedTitle, recentlyViewedLimit,
     cartShareEnabled, cartShareText,
-    cartRecoveryEnabled, cartRecoveryWhatsApp, cartRecoveryMessage,
+    cartRecoveryEnabled, cartRecoveryLabel, cartRecoveryMessage,
     deliveryEstimatorEnabled, deliveryMinDays, deliveryMaxDays, deliveryMessage, deliveryCutoffHour,
   ]);
 
@@ -241,7 +242,7 @@ export default function FeaturesPage() {
     setCartShareText(s.cartShareText ?? "Share your cart");
 
     setCartRecoveryEnabled(s.cartRecoveryEnabled ?? false);
-    setCartRecoveryWhatsApp(s.cartRecoveryWhatsApp ?? "");
+    setCartRecoveryLabel(s.cartRecoveryLabel ?? "💬 Send cart link via WhatsApp");
     setCartRecoveryMessage(s.cartRecoveryMessage ?? "Check out my cart: {{url}}");
 
     setDeliveryEstimatorEnabled(s.deliveryEstimatorEnabled ?? false);
@@ -296,7 +297,7 @@ export default function FeaturesPage() {
         cartShareText,
 
         cartRecoveryEnabled:  String(cartRecoveryEnabled),
-        cartRecoveryWhatsApp,
+        cartRecoveryLabel,
         cartRecoveryMessage,
 
         deliveryEstimatorEnabled: String(deliveryEstimatorEnabled),
@@ -763,28 +764,22 @@ export default function FeaturesPage() {
             onChange={setCartRecoveryEnabled}
           />
           {cartRecoveryEnabled && (
-            <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div>
-                <label style={labelStyle}>WhatsApp Phone Number (optional)</label>
-                <input type="text" value={cartRecoveryWhatsApp}
-                  onChange={e => setCartRecoveryWhatsApp(e.target.value.replace(/[^0-9]/g, ""))}
-                  style={inputStyle} placeholder="919876543210 (country code + number, no +)" />
-                <p style={helpText}>Leave blank to open WhatsApp without a pre-filled recipient (customer fills it in).</p>
+                <label style={labelStyle}>Section Label</label>
+                <input type="text" value={cartRecoveryLabel}
+                  onChange={e => setCartRecoveryLabel(e.target.value)}
+                  style={inputStyle} placeholder="💬 Send cart link via WhatsApp" />
+                <p style={helpText}>This text appears above the phone input in the side cart.</p>
               </div>
               <div>
                 <label style={labelStyle}>Message Template</label>
                 <input type="text" value={cartRecoveryMessage}
                   onChange={e => setCartRecoveryMessage(e.target.value)}
                   style={inputStyle} placeholder="Check out my cart: {{url}}" />
-                <p style={helpText}>Use <code style={codeStyle}>{"{{url}}"}</code> to insert the cart permalink automatically.</p>
+                <p style={helpText}>Use <code style={codeStyle}>{"{{url}}"}</code> to insert the cart permalink automatically. Customers enter their own phone number in the side cart.</p>
               </div>
-              <div style={{ padding: "12px 14px", border: "1px solid #e5e7eb", borderRadius: 10, background: "#f9fafb" }}>
-                <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "#374151" }}>Preview</p>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "#25d366", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 600 }}>
-                  💬 Share on WhatsApp
-                </div>
-              </div>
-            </>
+            </div>
           )}
         </s-stack>
       </s-section>
