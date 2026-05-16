@@ -119,6 +119,7 @@ const DEFAULT_SETTINGS = {
   cartRecoveryEnabled: false,
   cartRecoveryWhatsApp: "",
   cartRecoveryMessage: "Check out my cart: {{url}}",
+  cartRecoveryLabel: "💬 Send cart link via WhatsApp",
 
   deliveryEstimatorEnabled: false,
   deliveryMinDays: 3,
