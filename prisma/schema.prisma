@@ -100,8 +100,9 @@ model CartSettings {
   aiUpsellLimit   Int     @default(4)
 
   // Multiple freebie offers (up to 5)
-  freebieOffers    String  @default("[]")
-  freebieShowAtTop Boolean @default(false)
+  freebieOffers              String  @default("[]")
+  freebieShowAtTop           Boolean @default(false)
+  freebieProgressBarEnabled  Boolean @default(true)
 
   // Block /cart page — redirect to side cart instead
   blockCartPage Boolean @default(false)
@@ -185,6 +186,11 @@ model CartSettings {
   // Cart Share Link
   cartShareEnabled Boolean @default(false)
   cartShareText    String  @default("Share your cart")
+
+  // Localization
+  currencyCode   String @default("USD")
+  currencySymbol String @default("$")
+  locale         String @default("en-US")
 
   // Cart Recovery / WhatsApp Share
   cartRecoveryEnabled  Boolean @default(false)

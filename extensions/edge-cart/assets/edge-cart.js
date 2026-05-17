@@ -32,7 +32,7 @@
   var discountError      = "";
   var discountSuccess    = false;
   var discountInputValue = ""; /* preserves typed code while footer re-renders */
-  var waDialCode         = "1";  /* selected country dial code (no +) */
+  var waDialCode         = "91"; /* selected country dial code (no +) — India default */
   var waLocalNumber      = "";   /* local part of phone entered by customer */
   var orderNote         = "";
   var aiRecommendations       = [];
@@ -705,7 +705,7 @@
               : qtyOrSpinner,
             '<div class="ec-item__price">',
               freebie
-                ? '<span class="ec-item__line ec-item__line--free">$0.00</span>'
+                ? '<span class="ec-item__line ec-item__line--free">FREE</span>'
                 : [
                   hasDisc ? '<span class="ec-item__orig">' + money(item.original_line_price) + '</span>' : "",
                   '<span class="ec-item__line' + (hasDisc ? " ec-item__line--sale" : "") + '">' + money(item.line_price) + '</span>',
@@ -1126,7 +1126,8 @@
         return;
       }
 
-      /* Locked — show progress bar */
+      /* Locked — show progress bar (only if merchant enabled it) */
+      if (!settings.freebieProgressBarEnabled) return;
       var prog = offerProgress(offer);
       if (!prog || !prog.msg) return;
       html += [
@@ -1683,33 +1684,54 @@
     return document.querySelector('form[action*="/cart/add"], form[action="/cart/add"]');
   }
 
-  /* Find the last element that should appear before our injection:
-     the ATC form itself, plus any Buy Now / payment buttons that follow it
-     in the same parent container (Dawn, Debut, Impulse, etc.). */
+  /* Returns true if el looks like a Buy Now / payment button element */
+  function isPaymentEl(el) {
+    if (!el || !el.tagName) return false;
+    var tag = el.tagName.toLowerCase();
+    var cls = (typeof el.className === "string") ? el.className.toLowerCase() : "";
+    return tag === "payment-button" ||
+      tag === "shopify-payment-button" ||
+      cls.indexOf("payment") !== -1 ||
+      cls.indexOf("buy-now") !== -1 ||
+      cls.indexOf("dynamic-checkout") !== -1 ||
+      !!el.querySelector("shopify-payment-button, payment-button, [data-shopify='payment-button']");
+  }
+
+  /* Find the last element that should appear before our injection.
+     Works across all themes: Dawn (payment-button sibling of product-form),
+     Debut (payment button inside form), Impulse, Horizon, etc. */
   function findInsertionAnchor() {
     var form = findAtcForm();
     if (!form) return null;
-    var parent  = form.parentNode;
-    var anchor  = form;
-    /* Walk up to 8 next siblings, grab the last payment/checkout-related one */
-    var sibling = form.nextElementSibling;
-    var steps   = 0;
-    while (sibling && steps < 8) {
-      var tag = sibling.tagName.toLowerCase();
-      var cls = (sibling.className || "").toLowerCase();
-      var isPayment =
-        tag === "payment-button" ||
-        tag === "shopify-payment-button" ||
-        cls.indexOf("payment") !== -1 ||
-        cls.indexOf("buy-now") !== -1 ||
-        cls.indexOf("dynamic-checkout") !== -1 ||
-        cls.indexOf("shopify-payment-button") !== -1 ||
-        sibling.querySelector(".shopify-payment-button, payment-button, [data-shopify='payment-button']");
-      if (isPayment) anchor = sibling;
-      sibling = sibling.nextElementSibling;
-      steps++;
+
+    /* Strategy 1: find any shopify-payment-button that follows the form in the document */
+    var allPay = document.querySelectorAll(
+      "shopify-payment-button, payment-button, [data-shopify='payment-button']"
+    );
+    for (var pi = allPay.length - 1; pi >= 0; pi--) {
+      var btn = allPay[pi];
+      /* compareDocumentPosition bit 4 = DOCUMENT_POSITION_FOLLOWING */
+      if (form.compareDocumentPosition(btn) & 4) {
+        return { anchor: btn, parent: btn.parentNode };
+      }
     }
-    return { anchor: anchor, parent: parent };
+
+    /* Strategy 2: walk up to 3 DOM levels from the form, check next siblings at each level */
+    var el = form;
+    for (var level = 0; level < 3; level++) {
+      var sib = el.nextElementSibling;
+      var steps = 0;
+      while (sib && steps < 8) {
+        if (isPaymentEl(sib)) return { anchor: sib, parent: sib.parentNode };
+        sib = sib.nextElementSibling;
+        steps++;
+      }
+      if (!el.parentNode || el.parentNode === document.body) break;
+      el = el.parentNode;
+    }
+
+    /* Strategy 3: fall back to inserting after the form */
+    return { anchor: form, parent: form.parentNode };
   }
 
   /* Insert element immediately after the ATC form */
@@ -1833,7 +1855,28 @@
     var manual  = settings.productPageUpsellProducts || [];
 
     if (manual.length > 0) {
-      renderProductPageUpsell(title, manual.slice(0, limit));
+      var products = manual.slice(0, limit);
+      /* Auto-fill missing or non-HTTP images by fetching /products/{handle}.json */
+      var needsImage = products.filter(function(p) { return (!p.imageUrl || !/^https?:\/\//.test(p.imageUrl)) && p.handle; });
+      if (needsImage.length === 0) {
+        renderProductPageUpsell(title, products);
+        return;
+      }
+      var pending = needsImage.length;
+      needsImage.forEach(function(p) {
+        fetch("/products/" + p.handle + ".json")
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data && data.product && data.product.images && data.product.images[0]) {
+              p.imageUrl = data.product.images[0].src || "";
+            }
+          })
+          .catch(function() {})
+          .finally(function() {
+            pending--;
+            if (pending === 0) renderProductPageUpsell(title, products);
+          });
+      });
       return;
     }
 
@@ -1856,16 +1899,35 @@
         if (!data.products || !data.products.length) return;
         var products = data.products.slice(0, limit).map(function (p) {
           var v = p.variants && p.variants[0];
+          /* featured_image is often a direct URL string on recommendations responses */
+          var imgSrc = (p.featured_image && (p.featured_image.url || p.featured_image)) ||
+                       (p.images && p.images[0] && (p.images[0].src || p.images[0].url || p.images[0].originalSrc || "")) ||
+                       "";
+          if (imgSrc && imgSrc.indexOf("//") === 0) imgSrc = "https:" + imgSrc;
           return {
             title:        p.title,
             handle:       p.handle,
-            imageUrl:     p.images && p.images[0] ? p.images[0].src : "",
+            imageUrl:     typeof imgSrc === "string" ? imgSrc : "",
             price:        v ? (v.price || 0) : (p.price || 0),
             comparePrice: v && v.compare_at_price > v.price ? v.compare_at_price : 0,
             variantId:    v ? v.id : null,
           };
         });
-        renderProductPageUpsell(title, products);
+        /* Auto-fetch images for any product still missing one */
+        var needsImg = products.filter(function(p) { return (!p.imageUrl || !/^https?:\/\//.test(p.imageUrl)) && p.handle; });
+        if (needsImg.length === 0) { renderProductPageUpsell(title, products); return; }
+        var pending = needsImg.length;
+        needsImg.forEach(function(p) {
+          fetch("/products/" + p.handle + ".json")
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              if (d && d.product && d.product.images && d.product.images[0]) {
+                p.imageUrl = d.product.images[0].src || "";
+              }
+            })
+            .catch(function() {})
+            .finally(function() { if (--pending === 0) renderProductPageUpsell(title, products); });
+        });
       })
       .catch(function () {});
   }
@@ -1895,7 +1957,7 @@
               '<span class="ec-pp-upsell__price">' + money(p.price) + '</span>',
               disc > 0 ? '<span class="ec-pp-upsell__compare">' + money(p.comparePrice) + '</span>' : "",
             '</div>',
-            '<button class="ec-pp-upsell__btn" data-vid="' + esc(String(p.variantId || "")) + '">',
+            '<button class="ec-pp-upsell__btn" data-vid="' + esc(extractId(String(p.variantId || ""))) + '">',
               '<svg class="ec-pp-upsell__cart-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>',
               '<span>Add to Cart</span>',
             '</button>',
@@ -2638,29 +2700,39 @@
 
   /* Formats a dollar-string from Shopify's REST API (e.g. "749.95") directly.
      Avoids the * 100 / 100 round-trip that can introduce floating-point drift. */
+  /* Resolve store currency — cart.currency is most reliable (from Shopify AJAX API).
+     Falls back to window.Shopify.currency.active, then app settings, then USD. */
+  function storeCurrency() {
+    return (cart && cart.currency) ||
+      (window.Shopify && window.Shopify.currency && window.Shopify.currency.active) ||
+      (settings && settings.currencyCode) || "USD";
+  }
+
+  /* Resolve locale — window.Shopify.locale is set by Shopify to e.g. "en-IN".
+     Falls back to app settings, then en-US. */
+  function storeLocale() {
+    return (window.Shopify && window.Shopify.locale) ||
+      (settings && settings.locale) || "en-US";
+  }
+
   function moneyDollars(str) {
     var val = parseFloat(str) || 0;
-    var currency = (window.Shopify && window.Shopify.currency && window.Shopify.currency.active)
-      || (cart && cart.currency) || "USD";
     try {
-      return new Intl.NumberFormat("en-US", {
-        style: "currency", currency: currency, minimumFractionDigits: 2,
+      return new Intl.NumberFormat(storeLocale(), {
+        style: "currency", currency: storeCurrency(), minimumFractionDigits: 2,
       }).format(val);
     } catch (_) {
-      return "$" + val.toFixed(2);
+      return (settings && settings.currencySymbol || "$") + val.toFixed(2);
     }
   }
 
   function moneyVal(cents) {
-    var currency = (window.Shopify && window.Shopify.currency && window.Shopify.currency.active)
-      || (cart && cart.currency)
-      || "USD";
     try {
-      return new Intl.NumberFormat("en-US", {
-        style: "currency", currency: currency, minimumFractionDigits: 2,
+      return new Intl.NumberFormat(storeLocale(), {
+        style: "currency", currency: storeCurrency(), minimumFractionDigits: 2,
       }).format(cents / 100);
     } catch (_) {
-      return "$" + (cents / 100).toFixed(2);
+      return (settings && settings.currencySymbol || "$") + (cents / 100).toFixed(2);
     }
   }
 

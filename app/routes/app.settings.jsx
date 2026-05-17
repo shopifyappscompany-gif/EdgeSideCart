@@ -56,6 +56,9 @@ export const action = async ({ request }) => {
     ocuProductTitle:         String(form.get("ocuProductTitle") || ""),
     ocuProductImageUrl:      String(form.get("ocuProductImageUrl") || ""),
     ocuProductPrice:         parseInt(form.get("ocuProductPrice") || "0", 10),
+    currencyCode:            String(form.get("currencyCode") || "USD"),
+    currencySymbol:          String(form.get("currencySymbol") || "$"),
+    locale:                  String(form.get("locale") || "en-US"),
   };
 
   await prisma.cartSettings.upsert({
@@ -118,6 +121,9 @@ export default function GeneralSettings() {
   const [ocuHeading,         setOcuHeading]         = useState(s.ocuHeading ?? "Complete your order");
   const [ocuLabel,           setOcuLabel]           = useState(s.ocuLabel ?? "Add to your order");
   const [ocuHideWhenInCart,  setOcuHideWhenInCart]  = useState(s.ocuHideWhenInCart ?? true);
+  const [currencyCode,       setCurrencyCode]       = useState(s.currencyCode ?? "USD");
+  const [currencySymbol,     setCurrencySymbol]     = useState(s.currencySymbol ?? "$");
+  const [locale,             setLocale]             = useState(s.locale ?? "en-US");
   const [ocuProduct,         setOcuProduct]         = useState(
     s.ocuProductVariantId ? {
       variantId: s.ocuProductVariantId,
@@ -141,6 +147,7 @@ export default function GeneralSettings() {
       customCss, customJs, customCartIconSelector,
       clickableLineItems, addToCartBehavior, addToCartToastSeconds,
       orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct,
+      currencyCode, currencySymbol, locale,
     });
   }
   const savedSnap = useRef(snap());
@@ -154,7 +161,8 @@ export default function GeneralSettings() {
       scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
       tieredRewardsEnabled, tieredRewards, scrollableItems, showLineItemProperties, blockCartPage,
       customCss, customJs, customCartIconSelector, clickableLineItems, addToCartBehavior,
-      addToCartToastSeconds, orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct]);
+      addToCartToastSeconds, orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct,
+      currencyCode, currencySymbol, locale]);
 
   useEffect(() => {
     if (fetcher.data?.success) {
@@ -213,6 +221,9 @@ export default function GeneralSettings() {
       imageUrl: s.ocuProductImageUrl || "",
       price: s.ocuProductPrice || 0,
     } : null);
+    setCurrencyCode(s.currencyCode ?? "USD");
+    setCurrencySymbol(s.currencySymbol ?? "$");
+    setLocale(s.locale ?? "en-US");
   }
 
   function handleSubmit(e) {
@@ -259,6 +270,9 @@ export default function GeneralSettings() {
         ocuProductTitle:         ocuProduct?.title || "",
         ocuProductImageUrl:      ocuProduct?.imageUrl || "",
         ocuProductPrice:         String(ocuProduct?.price || 0),
+        currencyCode,
+        currencySymbol,
+        locale,
       },
       { method: "POST" }
     );
@@ -292,6 +306,7 @@ export default function GeneralSettings() {
     tieredRewardsEnabled, tieredRewards,
     discountEnabled, autoDiscountEnabled, autoDiscountCode,
     orderNotesEnabled, showVariantTitle, showLineItemProperties,
+    currencySymbol,
   };
 
   return (
@@ -320,6 +335,36 @@ export default function GeneralSettings() {
           {isDirty && (
             <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />
           )}
+
+          {/* ── Localization ── */}
+      <s-section heading="Localization">
+        <s-stack direction="block" gap="base">
+          <div style={{ display: "flex", gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Currency</label>
+              <select value={currencyCode} onChange={e => {
+                const map = { USD:"$",EUR:"€",GBP:"£",INR:"₹",AUD:"A$",CAD:"C$",JPY:"¥",AED:"د.إ",SGD:"S$",ZAR:"R",BRL:"R$",MXN:"$",SEK:"kr",NOK:"kr",DKK:"kr",CHF:"Fr",PLN:"zł",TRY:"₺",SAR:"﷼",HKD:"HK$",NZD:"NZ$",KWD:"KD",QAR:"﷼",EGP:"E£",PKR:"₨",BDT:"৳",NGN:"₦",KES:"KSh",THB:"฿",IDR:"Rp",MYR:"RM",PHP:"₱",VND:"₫",TWD:"NT$",KRW:"₩",CNY:"¥",CZK:"Kč",HUF:"Ft",RON:"lei",UAH:"₴",ILS:"₪",MAD:"د.م."};
+                setCurrencyCode(e.target.value);
+                setCurrencySymbol(map[e.target.value] || e.target.value);
+              }} style={{ ...inputStyle, padding: "8px 10px" }}>
+                {[["USD","US Dollar ($)"],["EUR","Euro (€)"],["GBP","British Pound (£)"],["INR","Indian Rupee (₹)"],["AUD","Australian Dollar (A$)"],["CAD","Canadian Dollar (C$)"],["JPY","Japanese Yen (¥)"],["AED","UAE Dirham (د.إ)"],["SGD","Singapore Dollar (S$)"],["ZAR","South African Rand (R)"],["BRL","Brazilian Real (R$)"],["MXN","Mexican Peso ($)"],["SEK","Swedish Krona (kr)"],["NOK","Norwegian Krone (kr)"],["DKK","Danish Krone (kr)"],["CHF","Swiss Franc (Fr)"],["PLN","Polish Złoty (zł)"],["TRY","Turkish Lira (₺)"],["SAR","Saudi Riyal (﷼)"],["HKD","HK Dollar (HK$)"],["NZD","NZ Dollar (NZ$)"],["KWD","Kuwaiti Dinar (KD)"],["QAR","Qatari Riyal (﷼)"],["EGP","Egyptian Pound (E£)"],["PKR","Pakistani Rupee (₨)"],["BDT","Bangladeshi Taka (৳)"],["NGN","Nigerian Naira (₦)"],["KES","Kenyan Shilling (KSh)"],["THB","Thai Baht (฿)"],["IDR","Indonesian Rupiah (Rp)"],["MYR","Malaysian Ringgit (RM)"],["PHP","Philippine Peso (₱)"],["VND","Vietnamese Dong (₫)"],["KRW","South Korean Won (₩)"],["TWD","Taiwan Dollar (NT$)"],["CNY","Chinese Yuan (¥)"],["CZK","Czech Koruna (Kč)"],["HUF","Hungarian Forint (Ft)"],["RON","Romanian Leu (lei)"],["UAH","Ukrainian Hryvnia (₴)"],["ILS","Israeli Shekel (₪)"],["MAD","Moroccan Dirham (د.م.)"]].map(([c,l]) => (
+                  <option key={c} value={c}>{c} – {l}</option>
+                ))}
+              </select>
+              <p style={helpText}>Updates all currency labels in this settings page.</p>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Language / Locale</label>
+              <select value={locale} onChange={e => setLocale(e.target.value)} style={{ ...inputStyle, padding: "8px 10px" }}>
+                {[["en-US","English – United States"],["en-GB","English – United Kingdom"],["en-AU","English – Australia"],["en-IN","English – India"],["fr-FR","French – France"],["de-DE","German – Germany"],["es-ES","Spanish – Spain"],["es-MX","Spanish – Mexico"],["it-IT","Italian – Italy"],["pt-BR","Portuguese – Brazil"],["pt-PT","Portuguese – Portugal"],["nl-NL","Dutch"],["sv-SE","Swedish"],["pl-PL","Polish"],["tr-TR","Turkish"],["ja-JP","Japanese"],["ko-KR","Korean"],["zh-CN","Chinese – Simplified"],["ar-SA","Arabic"],["hi-IN","Hindi"]].map(([c,l]) => (
+                  <option key={c} value={c}>{c} – {l}</option>
+                ))}
+              </select>
+              <p style={helpText}>Controls how prices are formatted (decimal separators, symbol position). Also used in the side cart for number formatting.</p>
+            </div>
+          </div>
+        </s-stack>
+      </s-section>
 
           {/* ── Side Cart ── */}
       <s-section heading="Side Cart">
@@ -535,7 +580,7 @@ export default function GeneralSettings() {
                       <label style={labelStyle}>Type</label>
                       <select value={tier.thresholdType} onChange={e => updateTier(tier.id, "thresholdType", e.target.value)}
                         style={{ ...inputStyle, width: "100%" }}>
-                        <option value="cartValue">Cart Value ($)</option>
+                        <option value="cartValue">Cart Value ({s.currencySymbol || "$"})</option>
                         <option value="quantity">Item Quantity</option>
                       </select>
                     </div>
@@ -696,6 +741,7 @@ export default function GeneralSettings() {
         ocuLabel={ocuLabel} setOcuLabel={setOcuLabel}
         ocuHideWhenInCart={ocuHideWhenInCart} setOcuHideWhenInCart={setOcuHideWhenInCart}
         ocuProduct={ocuProduct} setOcuProduct={setOcuProduct}
+        currencySymbol={currencySymbol}
       />
 
       {/* ── Custom Code ── */}
@@ -817,7 +863,7 @@ const DEFAULT_BADGES = [
 function FeaturesTab({ settings: s, shopify }) {
   const featF = useFetcher();
   const saving = featF.state !== "idle";
-  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+  const fmt = (cents) => (s.currencySymbol || "$") + (cents / 100).toFixed(2);
   function parseBadges(raw) { try { return JSON.parse(raw || "[]"); } catch { return []; } }
   function parseTiers(raw) { try { return JSON.parse(raw || "[]"); } catch { return []; } }
 
@@ -964,7 +1010,7 @@ function FeaturesTab({ settings: s, shopify }) {
           <ToggleRow label="Enable Free Shipping Bar" desc="Show a progress bar at the top of the cart tracking how close the customer is to free shipping." checked={freeShippingBarEnabled} onChange={setFreeShippingBarEnabled} />
           {freeShippingBarEnabled && (<>
             <div>
-              <label style={labelStyle}>Free Shipping Threshold ($)</label>
+              <label style={labelStyle}>Free Shipping Threshold ({s.currencySymbol || "$"})</label>
               <input type="number" value={freeShippingThreshold} onChange={e => setFreeShippingThreshold(parseFloat(e.target.value) || 50)} style={{ ...inputStyle, width: 120 }} min="0" step="0.01" />
               <p style={helpText}>Cart total required to unlock free shipping.</p>
             </div>
@@ -1201,7 +1247,7 @@ function FeaturesTab({ settings: s, shopify }) {
 function ProductPageTab({ settings: s, shopify }) {
   const ppF = useFetcher();
   const saving = ppF.state !== "idle";
-  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+  const fmt = (cents) => (s.currencySymbol || "$") + (cents / 100).toFixed(2);
   function parseProducts(raw) { try { return JSON.parse(raw || "[]"); } catch { return []; } }
 
   const [socialProofEnabled,  setSocialProofEnabled]  = useState(s.productPageSocialProofEnabled ?? false);
@@ -1383,8 +1429,8 @@ function ProductPageTab({ settings: s, shopify }) {
 }
 
 // ── Analytics Tab ──────────────────────────────────────────
-function money(cents) {
-  return "$" + (cents / 100).toFixed(2);
+function money(cents, sym) {
+  return (sym || "$") + (cents / 100).toFixed(2);
 }
 
 function MetricCard({ label, value, sub, color }) {
@@ -1482,17 +1528,18 @@ function AnalyticsTab({ data, loading, days, setDays }) {
         </s-section>
       ) : (
         <>
-          <s-section title="Revenue">
+          <s-section title="Cart Revenue">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
-              <MetricCard label="Total Revenue" value={money(data.totalRevenue)} sub={`${data.checkouts} orders`} color="#111" />
-              <MetricCard label="Avg Order Value" value={money(data.aov)} sub="per checkout" color="#6366f1" />
-              <MetricCard label="Upsell Revenue" value={money(data.upsellRevenue)} sub={`${data.upsellAdds} upsells added`} color="#059669" />
-              <MetricCard label="Conversion Rate" value={data.conversionRate + "%"} sub={`${data.checkouts} of ${data.cartOpens} opens`} color="#d97706" />
+              <MetricCard label="Total Cart Value" value={money(data.totalCartValue ?? data.totalRevenue ?? 0)} sub={`${data.checkouts} carts reached checkout`} color="#111" />
+              <MetricCard label="Avg Cart Value" value={money(data.avgCartValue ?? data.aov ?? 0)} sub="per checkout" color="#6366f1" />
+              <MetricCard label="Upsell Cart Impact" value={money(data.upsellCartImpact ?? data.upsellRevenue ?? 0)} sub={`${data.upsellAdds} upsells added`} color="#059669" />
+              <MetricCard label="Conversion Rate" value={data.conversionRate + "%"} sub={`${data.checkouts} of ${data.cartOpens} cart opens`} color="#d97706" />
             </div>
             <div style={{ background: "#fff", border: "1.5px solid #f0f0f0", borderRadius: 14, padding: "20px 22px" }}>
-              <p style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 700, color: "#374151" }}>
-                Revenue — last {data.days} days
+              <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 700, color: "#374151" }}>
+                Cart Value at Checkout — last {data.days} days
               </p>
+              <p style={{ margin: "0 0 16px", fontSize: 11, color: "#9ca3af" }}>Cart value when customer clicked Checkout</p>
               <BarChart data={data.dailyRevenue} days={data.days} />
             </div>
           </s-section>
@@ -1500,34 +1547,38 @@ function AnalyticsTab({ data, loading, days, setDays }) {
           <s-section title="Engagement">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
               <MetricCard label="Cart Opens" value={data.cartOpens.toLocaleString()} sub={`last ${data.days} days`} />
-              <MetricCard label="Checkouts" value={data.checkouts.toLocaleString()} sub="reached checkout" color="#6366f1" />
+              <MetricCard label="Reached Checkout" value={data.checkouts.toLocaleString()} sub="clicked checkout" color="#6366f1" />
               <MetricCard label="Upsells Added" value={data.upsellAdds.toLocaleString()} sub="by customers" color="#059669" />
-              <MetricCard label="Freebies Claimed" value={data.freebieAdds.toLocaleString()} sub="free gifts added" color="#ec4899" />
+              <MetricCard label="Free Gifts Claimed" value={data.freebieAdds.toLocaleString()} sub="freebies auto-added" color="#ec4899" />
             </div>
           </s-section>
 
-          {data.topUpsells.length > 0 && (
+          {data.topUpsells && data.topUpsells.length > 0 && (
             <s-section title="Top Upsell Products">
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {data.topUpsells.map((u, i) => (
-                  <div key={u.vid} style={{
-                    display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
-                    background: "#fff", border: "1.5px solid #f0f0f0", borderRadius: 10,
-                  }}>
-                    <span style={{
-                      width: 24, height: 24, borderRadius: "50%",
-                      background: i === 0 ? "#fbbf24" : i === 1 ? "#9ca3af" : "#cd7c54",
-                      color: "#fff", fontSize: 11, fontWeight: 800,
-                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                    }}>{i + 1}</span>
-                    <span style={{ flex: 1, fontSize: 12, color: "#374151", fontFamily: "monospace" }}>
-                      Variant {u.vid.replace("gid://shopify/ProductVariant/", "")}
-                    </span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>
-                      {u.count} add{u.count !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                ))}
+                {data.topUpsells.map((u, i) => {
+                  const rankColors = ["#fbbf24", "#9ca3af", "#cd7c54"];
+                  const displayName = u.productTitle
+                    ? (u.variantTitle && u.variantTitle !== "Default Title" ? `${u.productTitle} — ${u.variantTitle}` : u.productTitle)
+                    : `Variant #${u.vid}`;
+                  return (
+                    <div key={u.vid} style={{
+                      display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+                      background: "#fff", border: "1.5px solid #f0f0f0", borderRadius: 10,
+                    }}>
+                      <span style={{
+                        width: 24, height: 24, borderRadius: "50%",
+                        background: rankColors[i] || "#e5e7eb",
+                        color: i < 3 ? "#fff" : "#374151", fontSize: 11, fontWeight: 800,
+                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                      }}>{i + 1}</span>
+                      <span style={{ flex: 1, fontSize: 13, color: "#374151" }}>{displayName}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#059669" }}>
+                        {u.count} add{u.count !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </s-section>
           )}
@@ -1536,7 +1587,7 @@ function AnalyticsTab({ data, loading, days, setDays }) {
 
       <s-section>
         <p style={{ fontSize: 12, color: "#9ca3af", margin: 0 }}>
-          📌 Tracks cart opens, checkouts (with cart value), upsell adds, and freebie claims. Revenue shown is the cart value at checkout time.
+          📌 Tracks: cart opens, checkouts (with cart value at that moment), upsell adds, and freebie claims. "Cart value at checkout" is what was in the cart when the customer clicked Checkout — actual collected revenue may differ due to discounts or abandoned carts.
         </p>
       </s-section>
     </>
@@ -1560,7 +1611,7 @@ function CartPreview({ settings }) {
   ];
   const cartTotal = sampleItems.reduce((s, i) => s + i.price * i.qty, 0);
 
-  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+  const fmt = (cents) => (settings.currencySymbol || "$") + (cents / 100).toFixed(2);
 
   // Tiered rewards progress
   const sortedTiers = [...(Array.isArray(tieredRewards) ? tieredRewards : [])].sort((a, b) => a.threshold - b.threshold);
@@ -1741,7 +1792,7 @@ function SaveBar({ onSave, onDiscard, saving }) {
 }
 
 // ── One-Click Upsell Section ─────────────────────────────────
-function OcuSection({ shopify, ocuEnabled, setOcuEnabled, ocuHeading, setOcuHeading, ocuLabel, setOcuLabel, ocuHideWhenInCart, setOcuHideWhenInCart, ocuProduct, setOcuProduct }) {
+function OcuSection({ shopify, ocuEnabled, setOcuEnabled, ocuHeading, setOcuHeading, ocuLabel, setOcuLabel, ocuHideWhenInCart, setOcuHideWhenInCart, ocuProduct, setOcuProduct, currencySymbol }) {
   async function pickProduct() {
     const selected = await shopify.resourcePicker({ type: "product", multiple: false });
     if (!selected || selected.length === 0) return;
@@ -1750,12 +1801,12 @@ function OcuSection({ shopify, ocuEnabled, setOcuEnabled, ocuHeading, setOcuHead
     setOcuProduct({
       variantId: variant?.id || "",
       title: p.title || "",
-      imageUrl: p.images?.[0]?.originalSrc || "",
+      imageUrl: p.images?.[0]?.originalSrc || p.images?.[0]?.src || "",
       price: variant?.price ? Math.round(parseFloat(variant.price) * 100) : 0,
     });
   }
 
-  const fmt = (cents) => "$" + (cents / 100).toFixed(2);
+  const fmt = (cents) => (currencySymbol || "$") + (cents / 100).toFixed(2);
 
   return (
     <s-section heading="One-Click Upsell">

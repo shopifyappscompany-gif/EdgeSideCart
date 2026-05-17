@@ -137,7 +137,7 @@ export default function UpsellSettings() {
         id: p.id,
         title: p.title,
         handle: p.handle,
-        featuredImage: p.images?.[0] ? { url: p.images[0].originalSrc || p.images[0].src } : null,
+        featuredImage: p.images?.[0] ? { url: p.images[0].url || p.images[0].originalSrc || p.images[0].src || "" } : null,
         variants: (p.variants || []).slice(0, 1).map((v) => ({
           id: v.id,
           title: v.displayName || v.title,
@@ -231,7 +231,7 @@ export default function UpsellSettings() {
 
             {triggerType === "cartValue" && (
               <div>
-                <label style={labelStyle}>Minimum Cart Value ($)</label>
+                <label style={labelStyle}>Minimum Cart Value ({s.currencySymbol || "$"})</label>
                 <input
                   type="number"
                   min="0"
