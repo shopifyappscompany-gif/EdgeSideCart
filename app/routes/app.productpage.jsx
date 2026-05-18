@@ -131,14 +131,21 @@ export default function ProductPageSettings() {
   async function pickUpsellProducts() {
     const selected = await shopify.resourcePicker({ type: "product", multiple: 6 });
     if (!selected || selected.length === 0) return;
-    const products = selected.map(p => ({
-      id: p.id,
-      title: p.title,
-      handle: p.handle,
-      imageUrl: p.images?.[0]?.originalSrc || "",
-      variantId: p.variants?.[0]?.id || "",
-      price: p.variants?.[0]?.price ? Math.round(parseFloat(p.variants[0].price) * 100) : 0,
-    }));
+    const products = selected.map(p => {
+      const img = p.images?.[0];
+      const imageUrl = typeof img === "string" ? img : (img?.url || img?.originalSrc || img?.src || "");
+      const rawVid = p.variants?.[0]?.id || "";
+      const variantId = rawVid.replace(/^gid:\/\/shopify\/ProductVariant\//, "");
+      return {
+        id: p.id,
+        title: p.title,
+        handle: p.handle,
+        imageUrl,
+        variantId,
+        variantTitle: p.variants?.[0]?.title || "",
+        price: p.variants?.[0]?.price ? Math.round(parseFloat(p.variants[0].price) * 100) : 0,
+      };
+    });
     setUpsellProducts(products);
   }
 

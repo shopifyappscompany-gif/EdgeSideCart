@@ -146,11 +146,12 @@ export const action = async ({ request }) => {
   }
 
   const freebieShowAtTop = form.get("freebieShowAtTop") === "true";
+  const freebieProgressBarEnabled = form.get("freebieProgressBarEnabled") !== "false";
   try {
     await prisma.cartSettings.upsert({
       where: { shop },
-      create: { shop, freebieOffers: JSON.stringify(offers), freebieShowAtTop },
-      update: { freebieOffers: JSON.stringify(offers), freebieShowAtTop },
+      create: { shop, freebieOffers: JSON.stringify(offers), freebieShowAtTop, freebieProgressBarEnabled },
+      update: { freebieOffers: JSON.stringify(offers), freebieShowAtTop, freebieProgressBarEnabled },
     });
   } catch (err) {
     return { error: "Save failed: " + (err?.message || "please try again") };
@@ -217,13 +218,14 @@ export default function FreebieSettings() {
   const [expandedId, setExpandedId] = useState(null);
   const [creatingForId, setCreatingForId] = useState(null);
   const [freebieShowAtTop, setFreebieShowAtTop] = useState(s.freebieShowAtTop ?? false);
+  const [freebieProgressBarEnabled, setFreebieProgressBarEnabled] = useState(s.freebieProgressBarEnabled ?? true);
 
-  const savedSnap = useRef(JSON.stringify({ offers: initOffers(s), freebieShowAtTop: s.freebieShowAtTop ?? false }));
+  const savedSnap = useRef(JSON.stringify({ offers: initOffers(s), freebieShowAtTop: s.freebieShowAtTop ?? false, freebieProgressBarEnabled: s.freebieProgressBarEnabled ?? true }));
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    setIsDirty(JSON.stringify({ offers, freebieShowAtTop }) !== savedSnap.current);
-  }, [offers, freebieShowAtTop]);
+    setIsDirty(JSON.stringify({ offers, freebieShowAtTop, freebieProgressBarEnabled }) !== savedSnap.current);
+  }, [offers, freebieShowAtTop, freebieProgressBarEnabled]);
 
   /* NOTE: no useEffect resetting offers on settings change — that would wipe
      newly-added offers whenever any fetcher action triggers loader revalidation. */
@@ -247,7 +249,7 @@ export default function FreebieSettings() {
       shopify.toast.show("Free gift product created! Click Save Settings to keep it.");
     } else if (fetcher.data.success && !fetcher.data.freebieVariantId) {
       shopify.toast.show(fetcher.data.message || "Saved!");
-      savedSnap.current = JSON.stringify(offers);
+      savedSnap.current = JSON.stringify({ offers, freebieShowAtTop, freebieProgressBarEnabled });
       setIsDirty(false);
     }
   }, [fetcher.data]);
@@ -255,7 +257,9 @@ export default function FreebieSettings() {
   function handleDiscard() {
     const fresh = initOffers(settings || {});
     setOffers(fresh);
-    savedSnap.current = JSON.stringify(fresh);
+    setFreebieShowAtTop(s.freebieShowAtTop ?? false);
+    setFreebieProgressBarEnabled(s.freebieProgressBarEnabled ?? true);
+    savedSnap.current = JSON.stringify({ offers: fresh, freebieShowAtTop: s.freebieShowAtTop ?? false, freebieProgressBarEnabled: s.freebieProgressBarEnabled ?? true });
     setIsDirty(false);
   }
 
@@ -269,7 +273,7 @@ export default function FreebieSettings() {
   function removeOffer(id) {
     const updated = offers.filter((o) => o.id !== id);
     setOffers(updated);
-    fetcher.submit({ freebieOffers: JSON.stringify(updated), freebieShowAtTop: String(freebieShowAtTop) }, { method: "POST" });
+    fetcher.submit({ freebieOffers: JSON.stringify(updated), freebieShowAtTop: String(freebieShowAtTop), freebieProgressBarEnabled: String(freebieProgressBarEnabled) }, { method: "POST" });
   }
 
   function updateOffer(id, changes) {
@@ -312,7 +316,7 @@ export default function FreebieSettings() {
   }
 
   function handleSave() {
-    fetcher.submit({ freebieOffers: JSON.stringify(offers), freebieShowAtTop: String(freebieShowAtTop) }, { method: "POST" });
+    fetcher.submit({ freebieOffers: JSON.stringify(offers), freebieShowAtTop: String(freebieShowAtTop), freebieProgressBarEnabled: String(freebieProgressBarEnabled) }, { method: "POST" });
   }
 
   return (
@@ -323,9 +327,24 @@ export default function FreebieSettings() {
         <s-stack direction="block" gap="base">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
             <div>
+              <strong style={{ fontSize: 14 }}>Show Progress Notification</strong>
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
+                Show a "Spend ₹X more to unlock your free gift!" bar in the cart when the threshold is not yet met. Turn off to silently add the gift when earned — no notification shown.
+              </p>
+            </div>
+            <label style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}>
+              <input type="checkbox" checked={freebieProgressBarEnabled} onChange={e => setFreebieProgressBarEnabled(e.target.checked)} style={{ display: "none" }} />
+              <span style={{ display: "inline-flex", width: 44, height: 24, borderRadius: 12, padding: 2, transition: "background 0.2s", alignItems: "center", background: freebieProgressBarEnabled ? "#008060" : "#ccc" }}>
+                <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 4px rgba(0,0,0,0.25)", transition: "transform 0.2s", display: "block", transform: freebieProgressBarEnabled ? "translateX(20px)" : "translateX(2px)" }} />
+              </span>
+            </label>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+            <div>
               <strong style={{ fontSize: 14 }}>Show Free Gift at Top</strong>
               <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
-                When enabled, the free gift progress bar always appears above the line items instead of below them.
+                When enabled, the free gift progress bar appears above the line items instead of below them.
               </p>
             </div>
             <label style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}>
@@ -363,6 +382,7 @@ export default function FreebieSettings() {
               onCreateProduct={() => createFreebieProduct(offer.id)}
               onPickProducts={() => pickProducts(offer.id)}
               onPickCollections={() => pickCollections(offer.id)}
+              currencySymbol={s.currencySymbol || "$"}
             />
           ))}
 
@@ -387,7 +407,7 @@ export default function FreebieSettings() {
 }
 
 /* ── Offer Card ────────────────────────────────────────────── */
-function OfferCard({ offer, index, expanded, creating, saving, onToggle, onUpdate, onRemove, onSave, onCreateProduct, onPickProducts, onPickCollections }) {
+function OfferCard({ offer, index, expanded, creating, saving, onToggle, onUpdate, onRemove, onSave, onCreateProduct, onPickProducts, onPickCollections, currencySymbol }) {
   const hasProduct = !!offer.productVariantId;
 
   return (
@@ -457,13 +477,13 @@ function OfferCard({ offer, index, expanded, creating, saving, onToggle, onUpdat
             {offer.triggerType === "cartValue" && (
               <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
                 <div>
-                  <label style={labelStyle}>Minimum ($)</label>
+                  <label style={labelStyle}>Minimum ({currencySymbol})</label>
                   <input type="number" min="0" step="0.01" value={offer.minCartValue ?? ""}
                     onChange={(e) => onUpdate({ minCartValue: parseFloat(e.target.value) || 0 })}
                     style={{ ...inputStyle, width: 140 }} />
                 </div>
                 <div>
-                  <label style={labelStyle}>Maximum ($) <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
+                  <label style={labelStyle}>Maximum ({currencySymbol}) <span style={{ fontWeight: 400, color: "#aaa" }}>optional</span></label>
                   <input type="number" min="0" step="0.01" value={offer.maxCartValue ?? ""}
                     onChange={(e) => onUpdate({ maxCartValue: e.target.value ? parseFloat(e.target.value) : null })}
                     placeholder="No limit" style={{ ...inputStyle, width: 140 }} />

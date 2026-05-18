@@ -53,6 +53,7 @@ const DEFAULT_SETTINGS = {
   freebieConditionLogic: "AND",
   freebieOffers: [],
   freebieShowAtTop: false,
+  freebieProgressBarEnabled: true,
   blockCartPage: false,
   upsellTriggerCollectionIds: [],
   scrollableItems: true,
@@ -115,6 +116,10 @@ const DEFAULT_SETTINGS = {
 
   cartShareEnabled: false,
   cartShareText: "Share your cart",
+
+  currencyCode:   "USD",
+  currencySymbol: "$",
+  locale:         "en-US",
 
   cartRecoveryEnabled: false,
   cartRecoveryWhatsApp: "",
