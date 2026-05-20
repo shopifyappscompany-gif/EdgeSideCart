@@ -809,6 +809,9 @@
 
     footer.innerHTML = html;
 
+    /* Refresh upsell prices + availability from live Shopify product data */
+    if (settings.upsellEnabled) refreshUpsellLiveData();
+
     /* Checkout bar — rendered outside the scroll area so it never shifts on open */
     if (checkoutBar) {
       var checkoutHtml = "";
@@ -2087,8 +2090,9 @@
         ? '<p class="ec-upsell-card__price"><s>' + compare + '</s> ' + price + '</p>'
         : (price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "");
       var img   = p.featuredImage && p.featuredImage.url ? p.featuredImage.url : "";
+      var handle = p.handle || "";
       return [
-        '<div class="ec-upsell-card">',
+        '<div class="ec-upsell-card" data-handle="' + esc(handle) + '" data-variant="' + esc(vid) + '">',
           img
             ? '<img class="ec-upsell-card__img" src="' + esc(img) + '" alt="' + esc(p.title) + '" loading="lazy">'
             : '<div class="ec-upsell-card__img-placeholder"></div>',
@@ -2108,6 +2112,76 @@
         '<div class="ec-upsell-track">' + cards + '</div>',
       '</div>',
     ].join("");
+  }
+
+  /* ── Live price + availability refresh for static upsell ── */
+  function refreshUpsellLiveData() {
+    var footer = id("ec-footer");
+    if (!footer) return;
+    var cards = footer.querySelectorAll(".ec-upsell-card[data-handle]");
+    if (!cards.length) return;
+
+    /* Batch by handle — one fetch per unique product */
+    var handles = {};
+    cards.forEach(function (card) {
+      var h = card.getAttribute("data-handle");
+      if (h && !handles[h]) handles[h] = [];
+      if (h) handles[h].push(card);
+    });
+
+    Object.keys(handles).forEach(function (handle) {
+      fetch("/products/" + encodeURIComponent(handle) + ".json", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (!data || !data.product) return;
+          var product = data.product;
+
+          handles[handle].forEach(function (card) {
+            var vid = card.getAttribute("data-variant");
+            var variant = product.variants.find(function (v) { return String(v.id) === String(vid); });
+            if (!variant) return;
+
+            /* Update price — /products/handle.json returns prices as decimal strings
+               e.g. "3000.00", so pass directly to moneyDollars (no *100 needed) */
+            var priceEl = card.querySelector(".ec-upsell-card__price");
+            var livePrice   = moneyDollars(variant.price);
+            var liveCompare = variant.compare_at_price && parseFloat(variant.compare_at_price) > parseFloat(variant.price)
+              ? moneyDollars(variant.compare_at_price) : "";
+            var newPriceHTML = liveCompare
+              ? '<s>' + liveCompare + '</s> ' + livePrice
+              : livePrice;
+            if (priceEl) {
+              priceEl.innerHTML = newPriceHTML;
+            } else if (livePrice) {
+              var body = card.querySelector(".ec-upsell-card__body");
+              if (body) {
+                var p = document.createElement("p");
+                p.className = "ec-upsell-card__price";
+                p.innerHTML = newPriceHTML;
+                var btn = body.querySelector(".ec-upsell-card__add");
+                if (btn) body.insertBefore(p, btn); else body.appendChild(p);
+              }
+            }
+
+            /* Update availability */
+            var available = variant.available !== false;
+            var btn = card.querySelector(".ec-upsell-card__add");
+            if (btn && !available) {
+              btn.disabled = true;
+              btn.textContent = "Sold Out";
+              btn.classList.add("ec-upsell-card__add--sold-out");
+            } else if (btn) {
+              /* Re-enable if it was previously marked sold out */
+              if (btn.classList.contains("ec-upsell-card__add--sold-out")) {
+                btn.disabled = false;
+                btn.textContent = "+ Add";
+                btn.classList.remove("ec-upsell-card__add--sold-out");
+              }
+            }
+          });
+        })
+        .catch(function () { /* silent — stale price stays shown */ });
+    });
   }
 
   /* ── AI Upsell — Shopify Recommendations API ────────────── */
@@ -2596,10 +2670,12 @@
           track("upsell_add", { variantId: vid, revenue: cart ? cart.total_price : 0 });
           render(); syncFreebie();
         })
-        .catch(function () {
+        .catch(function (err) {
           upsellBtn.disabled = false;
           upsellBtn.textContent = "+ Add";
           upsellBtn.classList.remove("ec-upsell-card__add--done");
+          var msg = err && err.message ? err.message : "Could not add item. Please try again.";
+          showToast(msg, 4000, false);
         });
       return;
     }

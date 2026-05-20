@@ -5,8 +5,8 @@ import prisma from "../db.server";
 
 /* Plan name strings defined here — NOT imported from shopify.server
    (server-only modules cannot be referenced by client-side component code) */
-const PLAN_GROWTH     = "Growth";
-const PLAN_ENTERPRISE = "Enterprise";
+const PLAN_GROWTH     = "Growth";  // $7/mo — up to 200 orders
+const PLAN_ENTERPRISE = "Scale";   // $19/mo — 200+ orders, unlimited
 
 /* ── Loader ────────────────────────────────────────────────── */
 export const loader = async ({ request }) => {
@@ -74,7 +74,7 @@ export const action = async ({ request }) => {
         isTest: process.env.NODE_ENV !== "production",
       });
       const sub = appSubscriptions?.[0];
-      if (sub) await billing.cancel({ subscriptionId: sub.id, isTest: true, prorate: true });
+      if (sub) await billing.cancel({ subscriptionId: sub.id, isTest: process.env.NODE_ENV !== "production", prorate: true });
     } catch (_) {}
     await prisma.cartSettings.upsert({
       where:  { shop },
@@ -105,7 +105,7 @@ const PLANS = [
     key:        "growth",
     name:       "Growth",
     price:      "$7",
-    sub:        "per month · unlimited orders",
+    sub:        "per month · up to 200 orders",
     highlight:  true,
     badge:      "Most Popular",
     trial:      "7-day free trial",
@@ -115,11 +115,11 @@ const PLANS = [
   },
   {
     key:        "enterprise",
-    name:       "Enterprise",
-    price:      "$25",
+    name:       "Scale",
+    price:      "$19",
     sub:        "per month · unlimited orders",
     highlight:  false,
-    badge:      null,
+    badge:      "Best for high volume",
     trial:      "7-day free trial",
     billingKey: PLAN_ENTERPRISE,
     note:       null,
@@ -179,7 +179,8 @@ export default function BillingPage() {
   const navigate = useNavigate();
 
   const currentKey = freeForever ? "forever-free" : (planName || "starter");
-  const overLimit  = currentKey === "starter" && orderCount > 40;
+  const overLimit  = (currentKey === "starter" && orderCount > 40) ||
+                     (currentKey === "growth"  && orderCount > 200);
 
   async function handlePlan(plan) {
     if (plan.key === "starter") {
@@ -217,11 +218,15 @@ export default function BillingPage() {
             {orderCount} orders in the last 30 days
           </strong>
           <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>
-            {overLimit
-              ? "You've exceeded the free plan limit. Upgrade to Growth to continue with no interruption."
-              : currentKey === "starter"
-                ? `${40 - orderCount} orders remaining on your free plan this month.`
-                : "Unlimited orders on your current plan."}
+            {currentKey === "starter" && overLimit
+              ? "You've exceeded the free plan limit (40 orders). Upgrade to Growth to continue."
+              : currentKey === "growth" && overLimit
+                ? "You've exceeded 200 orders this month. Upgrade to Scale for unlimited orders."
+                : currentKey === "starter"
+                  ? `${40 - orderCount} orders remaining on your free plan this month.`
+                  : currentKey === "growth"
+                    ? `${200 - orderCount > 0 ? 200 - orderCount : 0} orders remaining before Scale is recommended.`
+                    : "Unlimited orders on your current plan."}
           </p>
         </div>
         {freeForever && (
@@ -284,7 +289,7 @@ export default function BillingPage() {
 
               {/* What's included */}
               <p style={{ margin: "0 0 10px", fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                {plan.key === "enterprise" ? "Everything in Growth, plus:" : "All features included:"}
+                {plan.key === "enterprise" ? "Everything in Growth, plus:" : plan.key === "growth" ? "All features included:" : "All features included:"}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {plan.key === "enterprise"
@@ -332,7 +337,7 @@ export default function BillingPage() {
           </thead>
           <tbody>
             {[
-              ["Orders / month",                                    "40",   "Unlimited", "Unlimited"],
+              ["Orders / month",                                    "40",   "Up to 200", "Unlimited"],
               ["☑️ One-Click Upsell",                               false,  true,        true],
               ["⚡ AI-powered upsell (Recommendations API)",        false,  true,        true],
               ["🎁 Freebie / free gift (up to 5 offers)",          false,  true,        true],

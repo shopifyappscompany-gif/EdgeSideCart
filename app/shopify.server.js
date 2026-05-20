@@ -9,8 +9,8 @@ import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prism
 import prisma from "./db.server";
 
 /* ── Billing plan names — used as keys everywhere ── */
-export const PLAN_GROWTH     = "Growth";
-export const PLAN_ENTERPRISE = "Enterprise";
+export const PLAN_GROWTH     = "Growth";   // $7/mo — up to 200 orders
+export const PLAN_ENTERPRISE = "Scale";    // $19/mo — 200+ orders, unlimited
 /* Starter is free — no Shopify subscription needed */
 
 const shopify = shopifyApp({
@@ -31,7 +31,7 @@ const shopify = shopifyApp({
       trialDays: 7,
     },
     [PLAN_ENTERPRISE]: {
-      amount: 25.00,
+      amount: 19.00,
       currencyCode: "USD",
       interval: BillingInterval.Every30Days,
       trialDays: 7,
