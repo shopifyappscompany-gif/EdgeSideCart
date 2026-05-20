@@ -814,6 +814,12 @@ a.ec-item__title--link:hover {
   opacity: 1;
   cursor: default;
 }
+.ec-upsell-card__add--sold-out {
+  background: #f3f4f6 !important;
+  color: #9ca3af !important;
+  border-color: #e5e7eb !important;
+  cursor: default !important;
+}
 
 /* AI upsell badge */
 .ec-upsell-wrap--ai { border-top: 1px solid #f0f0f0; }
