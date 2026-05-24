@@ -14,12 +14,25 @@ export const loader = async ({ request }) => {
   let shopCurrencyCode = settings?.currencyCode || "USD";
   let shopCurrencySymbol = settings?.currencySymbol || "$";
   try {
-    const res = await admin.graphql(`#graphql query { shop { currency } }`);
-    const json = await res.json();
-    const code = json.data?.shop?.currency;
-    if (code) {
-      shopCurrencyCode = code;
-      shopCurrencySymbol = CURRENCY_SYMBOLS[code] || code;
+    const shopRes = await fetch(
+      `https://${session.shop}/admin/api/2025-07/shop.json`,
+      { headers: { "X-Shopify-Access-Token": session.accessToken } }
+    );
+    if (shopRes.ok) {
+      const shopData = await shopRes.json();
+      const code = shopData.shop?.currency;
+      if (code) {
+        const symbol = CURRENCY_SYMBOLS[code] || code;
+        shopCurrencyCode = code;
+        shopCurrencySymbol = symbol;
+        /* Auto-persist to DB so side cart also picks up the correct currency */
+        if (settings && (settings.currencyCode !== code || settings.currencySymbol !== symbol)) {
+          await prisma.cartSettings.update({
+            where: { shop: session.shop },
+            data: { currencyCode: code, currencySymbol: symbol },
+          }).catch(() => {});
+        }
+      }
     }
   } catch (_) {}
 
