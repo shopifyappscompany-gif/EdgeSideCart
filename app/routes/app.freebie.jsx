@@ -134,6 +134,7 @@ export const action = async ({ request }) => {
       // Return product data — the client updates the offer state; user clicks Save to persist
       return { success: true, freebieVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl };
     } catch (err) {
+      if (err instanceof Response) throw err;
       const msg = String(err?.message || err?.toString() || "");
       console.error("[Freebie] caught exception:", msg, err);
       if (msg.includes("access token") || msg.includes("Missing access token")) {
