@@ -37,14 +37,29 @@ export const action = async ({ request }) => {
         { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"] } } }
       );
       const createJson = await createRes.json();
+      console.log("[Freebie] productCreate response:", JSON.stringify(createJson));
+
+      /* GraphQL-level errors (auth, syntax, etc.) */
+      if (createJson.errors?.length) {
+        const gqlErr = createJson.errors[0].message;
+        console.error("[Freebie] GraphQL error:", gqlErr);
+        return { error: gqlErr };
+      }
+
       const createErrors = createJson.data?.productCreate?.userErrors;
-      if (createErrors?.length) return { error: createErrors[0].message };
+      if (createErrors?.length) {
+        console.error("[Freebie] userErrors:", createErrors);
+        return { error: createErrors[0].message };
+      }
 
       const product = createJson.data?.productCreate?.product;
       const variantId = product?.variants?.edges?.[0]?.node?.id;
       const productId = product?.id;
       let imageUrl = sourceImageUrl || null;
-      if (!variantId || !productId) return { error: "Failed to create freebie product." };
+      if (!variantId || !productId) {
+        console.error("[Freebie] Missing variantId or productId. product:", JSON.stringify(product));
+        return { error: "Failed to create freebie product. Check Render logs for details." };
+      }
 
       if (sourceImageUrl) {
         try {
@@ -64,7 +79,8 @@ export const action = async ({ request }) => {
         } catch (_) {}
       }
 
-      await admin.graphql(
+      console.log("[Freebie] updating variant price to $0, variantId:", variantId);
+      const updateRes = await admin.graphql(
         `#graphql
         mutation updateFreebieVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
           productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -74,6 +90,15 @@ export const action = async ({ request }) => {
         }`,
         { variables: { productId, variants: [{ id: variantId, price: "0.00", inventoryPolicy: "CONTINUE" }] } }
       );
+      const updateJson = await updateRes.json();
+      console.log("[Freebie] variant update response:", JSON.stringify(updateJson));
+      if (updateJson.errors?.length) {
+        return { error: "Variant update failed: " + updateJson.errors[0].message };
+      }
+      const updateErrors = updateJson.data?.productVariantsBulkUpdate?.userErrors;
+      if (updateErrors?.length) {
+        return { error: "Variant update failed: " + updateErrors[0].message };
+      }
 
       /* Publish to Online Store — required for /cart/add.js to accept the variant.
          The product is hidden from discovery via noindex tag + seo.hidden metafield below. */
@@ -109,7 +134,8 @@ export const action = async ({ request }) => {
       // Return product data — the client updates the offer state; user clicks Save to persist
       return { success: true, freebieVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl };
     } catch (err) {
-      const msg = String(err?.message || "");
+      const msg = String(err?.message || err?.toString() || "");
+      console.error("[Freebie] caught exception:", msg, err);
       if (msg.includes("access token") || msg.includes("Missing access token")) {
         return { error: "Session expired — please refresh the page and try again." };
       }
