@@ -14,9 +14,9 @@ export const loader = async ({ request }) => {
   let shopCurrencyCode = settings?.currencyCode || "USD";
   let shopCurrencySymbol = settings?.currencySymbol || "$";
   try {
-    const res = await admin.graphql(`#graphql query { shop { currencyCode } }`);
+    const res = await admin.graphql(`#graphql query { shop { currency } }`);
     const json = await res.json();
-    const code = json.data?.shop?.currencyCode;
+    const code = json.data?.shop?.currency;
     if (code) {
       shopCurrencyCode = code;
       shopCurrencySymbol = CURRENCY_SYMBOLS[code] || code;
