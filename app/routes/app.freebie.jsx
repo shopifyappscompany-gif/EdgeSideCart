@@ -24,17 +24,17 @@ export const action = async ({ request }) => {
     try {
       const createRes = await admin.graphql(
         `#graphql
-        mutation createFreebieProduct($input: ProductInput!) {
-          productCreate(input: $input) {
+        mutation createFreebieProduct($input: ProductCreateInput!) {
+          productCreate(product: $input) {
             product {
               id
-              variants(first: 1) { edges { node { id price } } }
+              variants(first: 1) { edges { node { id } } }
               featuredImage { url }
             }
             userErrors { field message }
           }
         }`,
-        { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"], variants: [{ price: "0.00", inventoryManagement: null }] } } }
+        { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"] } } }
       );
       const createJson = await createRes.json();
       console.log("[Freebie] productCreate response:", JSON.stringify(createJson));
@@ -55,30 +55,29 @@ export const action = async ({ request }) => {
       const product = createJson.data?.productCreate?.product;
       const variantId = product?.variants?.edges?.[0]?.node?.id;
       const productId = product?.id;
-      const variantPrice = product?.variants?.edges?.[0]?.node?.price;
       let imageUrl = sourceImageUrl || null;
       if (!variantId || !productId) {
         console.error("[Freebie] Missing variantId or productId. product:", JSON.stringify(product));
         return { error: "Failed to create freebie product. Check Render logs for details." };
       }
 
-      /* If the variant price wasn't set to $0 during creation, use REST API as fallback */
-      if (variantPrice !== "0.00") {
-        console.log("[Freebie] variant price not $0 after create (got:", variantPrice, "), trying REST fallback");
-        try {
-          const numericVariantId = variantId.split("/").pop();
-          await fetch(`https://${shop}/admin/api/2025-07/variants/${numericVariantId}.json`, {
+      /* Set variant price to $0 via REST API — more reliable than GraphQL mutations */
+      try {
+        const numericVariantId = variantId.split("/").pop();
+        const restRes = await fetch(
+          `https://${shop}/admin/api/2025-07/variants/${numericVariantId}.json`,
+          {
             method: "PUT",
             headers: {
               "X-Shopify-Access-Token": session.accessToken,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ variant: { id: numericVariantId, price: "0.00" } }),
-          });
-          console.log("[Freebie] REST variant price update sent");
-        } catch (restErr) {
-          console.error("[Freebie] REST price update failed:", restErr);
-        }
+            body: JSON.stringify({ variant: { id: Number(numericVariantId), price: "0.00" } }),
+          }
+        );
+        console.log("[Freebie] REST price update status:", restRes.status);
+      } catch (restErr) {
+        console.error("[Freebie] REST price update failed:", restErr);
       }
 
       if (sourceImageUrl) {
@@ -134,14 +133,12 @@ export const action = async ({ request }) => {
       return { success: true, freebieVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl };
     } catch (err) {
       if (err instanceof Response) {
+        console.error("[Freebie] SDK threw Response, status:", err.status);
         if (err.status >= 300 && err.status < 400) throw err;
-        return { error: "Session expired — please uninstall and reinstall the app to refresh permissions." };
+        return { error: `API error (HTTP ${err.status}) — check Render logs for details.` };
       }
       const msg = String(err?.message || err?.toString() || "");
       console.error("[Freebie] caught exception:", msg, err);
-      if (msg.includes("access token") || msg.includes("Missing access token")) {
-        return { error: "Session expired — please refresh the page and try again." };
-      }
       return { error: msg || "Failed to create freebie product. Please try again." };
     }
   }
