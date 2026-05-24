@@ -14,27 +14,27 @@ export const loader = async ({ request }) => {
   let shopCurrencyCode = settings?.currencyCode || "USD";
   let shopCurrencySymbol = settings?.currencySymbol || "$";
   try {
-    const shopRes = await fetch(
-      `https://${session.shop}/admin/api/2025-07/shop.json`,
-      { headers: { "X-Shopify-Access-Token": session.accessToken } }
-    );
-    if (shopRes.ok) {
-      const shopData = await shopRes.json();
-      const code = shopData.shop?.currency;
-      if (code) {
-        const symbol = CURRENCY_SYMBOLS[code] || code;
-        shopCurrencyCode = code;
-        shopCurrencySymbol = symbol;
-        /* Auto-persist to DB so side cart also picks up the correct currency */
-        if (settings && (settings.currencyCode !== code || settings.currencySymbol !== symbol)) {
-          await prisma.cartSettings.update({
-            where: { shop: session.shop },
-            data: { currencyCode: code, currencySymbol: symbol },
-          }).catch(() => {});
-        }
+    const gqlRes = await admin.graphql(`#graphql
+      query { shop { currencyCode } }
+    `);
+    const gqlData = await gqlRes.json();
+    const code = gqlData?.data?.shop?.currencyCode;
+    console.log("[Currency] detected:", code);
+    if (code) {
+      const symbol = CURRENCY_SYMBOLS[code] || code;
+      shopCurrencyCode = code;
+      shopCurrencySymbol = symbol;
+      /* Auto-persist to DB so side cart also picks up the correct currency */
+      if (settings && (settings.currencyCode !== code || settings.currencySymbol !== symbol)) {
+        await prisma.cartSettings.update({
+          where: { shop: session.shop },
+          data: { currencyCode: code, currencySymbol: symbol },
+        }).catch(() => {});
       }
     }
-  } catch (_) {}
+  } catch (e) {
+    console.error("[Currency] GraphQL failed:", e?.message);
+  }
 
   return { settings, shopCurrencyCode, shopCurrencySymbol };
 };
