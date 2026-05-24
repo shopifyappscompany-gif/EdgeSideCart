@@ -22,63 +22,43 @@ export const action = async ({ request }) => {
     const sourceTitle = String(form.get("sourceTitle") || "Free Gift");
     const sourceImageUrl = form.get("sourceImageUrl") ? String(form.get("sourceImageUrl")) : null;
     try {
-      const createRes = await admin.graphql(
-        `#graphql
-        mutation createFreebieProduct($input: ProductCreateInput!) {
-          productCreate(product: $input) {
-            product {
-              id
-              variants(first: 1) { edges { node { id } } }
-              featuredImage { url }
-            }
-            userErrors { field message }
-          }
-        }`,
-        { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"] } } }
-      );
-      const createJson = await createRes.json();
-      console.log("[Freebie] productCreate response:", JSON.stringify(createJson));
-
-      /* GraphQL-level errors (auth, syntax, etc.) */
-      if (createJson.errors?.length) {
-        const gqlErr = createJson.errors[0].message;
-        console.error("[Freebie] GraphQL error:", gqlErr);
-        return { error: gqlErr };
-      }
-
-      const createErrors = createJson.data?.productCreate?.userErrors;
-      if (createErrors?.length) {
-        console.error("[Freebie] userErrors:", createErrors);
-        return { error: createErrors[0].message };
-      }
-
-      const product = createJson.data?.productCreate?.product;
-      const variantId = product?.variants?.edges?.[0]?.node?.id;
-      const productId = product?.id;
-      let imageUrl = sourceImageUrl || null;
-      if (!variantId || !productId) {
-        console.error("[Freebie] Missing variantId or productId. product:", JSON.stringify(product));
-        return { error: "Failed to create freebie product. Check Render logs for details." };
-      }
-
-      /* Set variant price to $0 via REST API — more reliable than GraphQL mutations */
-      try {
-        const numericVariantId = variantId.split("/").pop();
-        const restRes = await fetch(
-          `https://${shop}/admin/api/2025-07/variants/${numericVariantId}.json`,
-          {
-            method: "PUT",
-            headers: {
-              "X-Shopify-Access-Token": session.accessToken,
-              "Content-Type": "application/json",
+      /* Create $0 product via REST API — bypasses GraphQL session token issues */
+      console.log("[Freebie] creating product via REST for shop:", shop);
+      const restCreateRes = await fetch(
+        `https://${shop}/admin/api/2025-07/products.json`,
+        {
+          method: "POST",
+          headers: {
+            "X-Shopify-Access-Token": session.accessToken,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            product: {
+              title: `${sourceTitle} — Free Gift`,
+              status: "active",
+              tags: "edge-cart-freebie,edge-cart-hidden,noindex",
+              variants: [{ price: "0.00" }],
             },
-            body: JSON.stringify({ variant: { id: Number(numericVariantId), price: "0.00" } }),
-          }
-        );
-        console.log("[Freebie] REST price update status:", restRes.status);
-      } catch (restErr) {
-        console.error("[Freebie] REST price update failed:", restErr);
+          }),
+        }
+      );
+      console.log("[Freebie] REST create status:", restCreateRes.status);
+      if (!restCreateRes.ok) {
+        const errText = await restCreateRes.text();
+        console.error("[Freebie] REST create failed:", restCreateRes.status, errText);
+        return { error: `Product creation failed (HTTP ${restCreateRes.status}). Check Render logs.` };
       }
+      const restData = await restCreateRes.json();
+      const numericProductId = restData.product?.id;
+      const numericVariantId = restData.product?.variants?.[0]?.id;
+      if (!numericProductId || !numericVariantId) {
+        console.error("[Freebie] REST create missing IDs:", JSON.stringify(restData));
+        return { error: "Failed to get product IDs after creation. Check Render logs." };
+      }
+      /* Convert numeric REST IDs to GIDs for GraphQL publish/metafield calls */
+      const productId = `gid://shopify/Product/${numericProductId}`;
+      const variantId = `gid://shopify/ProductVariant/${numericVariantId}`;
+      let imageUrl = sourceImageUrl || null;
 
       if (sourceImageUrl) {
         try {
