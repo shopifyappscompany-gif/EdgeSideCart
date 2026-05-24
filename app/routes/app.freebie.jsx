@@ -23,9 +23,12 @@ export const action = async ({ request }) => {
     const sourceImageUrl = form.get("sourceImageUrl") ? String(form.get("sourceImageUrl")) : null;
     try {
       /* Create $0 product via REST API — bypasses GraphQL session token issues */
-      console.log("[Freebie] creating product via REST for shop:", shop);
+      const tokenPreview = session.accessToken ? session.accessToken.slice(0, 12) + "..." : "MISSING";
+      console.log("[Freebie] shop:", shop, "| token preview:", tokenPreview, "| token length:", session.accessToken?.length);
+      const restUrl = `https://${shop}/admin/api/2025-07/products.json`;
+      console.log("[Freebie] REST URL:", restUrl);
       const restCreateRes = await fetch(
-        `https://${shop}/admin/api/2025-07/products.json`,
+        restUrl,
         {
           method: "POST",
           headers: {
@@ -46,7 +49,7 @@ export const action = async ({ request }) => {
       if (!restCreateRes.ok) {
         const errText = await restCreateRes.text();
         console.error("[Freebie] REST create failed:", restCreateRes.status, errText);
-        return { error: `Product creation failed (HTTP ${restCreateRes.status}). Check Render logs.` };
+        return { error: `Product creation failed (HTTP ${restCreateRes.status}): ${errText.slice(0, 200)}` };
       }
       const restData = await restCreateRes.json();
       const numericProductId = restData.product?.id;
