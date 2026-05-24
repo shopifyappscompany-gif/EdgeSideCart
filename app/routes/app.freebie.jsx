@@ -24,17 +24,17 @@ export const action = async ({ request }) => {
     try {
       const createRes = await admin.graphql(
         `#graphql
-        mutation createFreebieProduct($input: ProductCreateInput!) {
-          productCreate(product: $input) {
+        mutation createFreebieProduct($input: ProductInput!) {
+          productCreate(input: $input) {
             product {
               id
-              variants(first: 1) { edges { node { id } } }
+              variants(first: 1) { edges { node { id price } } }
               featuredImage { url }
             }
             userErrors { field message }
           }
         }`,
-        { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"] } } }
+        { variables: { input: { title: `${sourceTitle} — Free Gift`, status: "ACTIVE", tags: ["edge-cart-freebie", "edge-cart-hidden", "noindex"], variants: [{ price: "0.00", inventoryManagement: null }] } } }
       );
       const createJson = await createRes.json();
       console.log("[Freebie] productCreate response:", JSON.stringify(createJson));
@@ -55,10 +55,30 @@ export const action = async ({ request }) => {
       const product = createJson.data?.productCreate?.product;
       const variantId = product?.variants?.edges?.[0]?.node?.id;
       const productId = product?.id;
+      const variantPrice = product?.variants?.edges?.[0]?.node?.price;
       let imageUrl = sourceImageUrl || null;
       if (!variantId || !productId) {
         console.error("[Freebie] Missing variantId or productId. product:", JSON.stringify(product));
         return { error: "Failed to create freebie product. Check Render logs for details." };
+      }
+
+      /* If the variant price wasn't set to $0 during creation, use REST API as fallback */
+      if (variantPrice !== "0.00") {
+        console.log("[Freebie] variant price not $0 after create (got:", variantPrice, "), trying REST fallback");
+        try {
+          const numericVariantId = variantId.split("/").pop();
+          await fetch(`https://${shop}/admin/api/2025-07/variants/${numericVariantId}.json`, {
+            method: "PUT",
+            headers: {
+              "X-Shopify-Access-Token": session.accessToken,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ variant: { id: numericVariantId, price: "0.00" } }),
+          });
+          console.log("[Freebie] REST variant price update sent");
+        } catch (restErr) {
+          console.error("[Freebie] REST price update failed:", restErr);
+        }
       }
 
       if (sourceImageUrl) {
@@ -77,27 +97,6 @@ export const action = async ({ request }) => {
           const attachedUrl = mediaJson.data?.productCreateMedia?.media?.[0]?.image?.url;
           if (attachedUrl) imageUrl = attachedUrl;
         } catch (_) {}
-      }
-
-      console.log("[Freebie] updating variant price to $0, variantId:", variantId);
-      const updateRes = await admin.graphql(
-        `#graphql
-        mutation updateFreebieVariant($input: ProductVariantInput!) {
-          productVariantUpdate(input: $input) {
-            productVariant { id price }
-            userErrors { field message }
-          }
-        }`,
-        { variables: { input: { id: variantId, price: "0.00" } } }
-      );
-      const updateJson = await updateRes.json();
-      console.log("[Freebie] variant update response:", JSON.stringify(updateJson));
-      if (updateJson.errors?.length) {
-        return { error: "Variant update failed: " + updateJson.errors[0].message };
-      }
-      const updateErrors = updateJson.data?.productVariantUpdate?.userErrors;
-      if (updateErrors?.length) {
-        return { error: "Variant update failed: " + updateErrors[0].message };
       }
 
       /* Publish to Online Store — required for /cart/add.js to accept the variant.
