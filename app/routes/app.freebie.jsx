@@ -82,20 +82,20 @@ export const action = async ({ request }) => {
       console.log("[Freebie] updating variant price to $0, variantId:", variantId);
       const updateRes = await admin.graphql(
         `#graphql
-        mutation updateFreebieVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            productVariants { id price }
+        mutation updateFreebieVariant($input: ProductVariantInput!) {
+          productVariantUpdate(input: $input) {
+            productVariant { id price }
             userErrors { field message }
           }
         }`,
-        { variables: { productId, variants: [{ id: variantId, price: "0.00", inventoryPolicy: "CONTINUE" }] } }
+        { variables: { input: { id: variantId, price: "0.00" } } }
       );
       const updateJson = await updateRes.json();
       console.log("[Freebie] variant update response:", JSON.stringify(updateJson));
       if (updateJson.errors?.length) {
         return { error: "Variant update failed: " + updateJson.errors[0].message };
       }
-      const updateErrors = updateJson.data?.productVariantsBulkUpdate?.userErrors;
+      const updateErrors = updateJson.data?.productVariantUpdate?.userErrors;
       if (updateErrors?.length) {
         return { error: "Variant update failed: " + updateErrors[0].message };
       }
@@ -134,7 +134,10 @@ export const action = async ({ request }) => {
       // Return product data — the client updates the offer state; user clicks Save to persist
       return { success: true, freebieVariantId: variantId, freebieProductTitle: sourceTitle, freebieProductImageUrl: imageUrl };
     } catch (err) {
-      if (err instanceof Response) throw err;
+      if (err instanceof Response) {
+        if (err.status >= 300 && err.status < 400) throw err;
+        return { error: "Session expired — please uninstall and reinstall the app to refresh permissions." };
+      }
       const msg = String(err?.message || err?.toString() || "");
       console.error("[Freebie] caught exception:", msg, err);
       if (msg.includes("access token") || msg.includes("Missing access token")) {

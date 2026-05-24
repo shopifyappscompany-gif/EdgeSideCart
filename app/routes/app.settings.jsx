@@ -5,10 +5,25 @@ import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 
+const CURRENCY_SYMBOLS = { USD:"$",EUR:"€",GBP:"£",INR:"₹",AUD:"A$",CAD:"C$",JPY:"¥",AED:"د.إ",SGD:"S$",ZAR:"R",BRL:"R$",MXN:"$",SEK:"kr",NOK:"kr",DKK:"kr",CHF:"Fr",PLN:"zł",TRY:"₺",SAR:"﷼",HKD:"HK$",NZD:"NZ$",KWD:"KD",QAR:"﷼",EGP:"E£",PKR:"₨",BDT:"৳",NGN:"₦",KES:"KSh",THB:"฿",IDR:"Rp",MYR:"RM",PHP:"₱",VND:"₫",TWD:"NT$",KRW:"₩",CNY:"¥",CZK:"Kč",HUF:"Ft",RON:"lei",UAH:"₴",ILS:"₪",MAD:"د.م." };
+
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const settings = await prisma.cartSettings.findUnique({ where: { shop: session.shop } });
-  return { settings };
+
+  let shopCurrencyCode = settings?.currencyCode || "USD";
+  let shopCurrencySymbol = settings?.currencySymbol || "$";
+  try {
+    const res = await admin.graphql(`#graphql query { shop { currencyCode } }`);
+    const json = await res.json();
+    const code = json.data?.shop?.currencyCode;
+    if (code) {
+      shopCurrencyCode = code;
+      shopCurrencySymbol = CURRENCY_SYMBOLS[code] || code;
+    }
+  } catch (_) {}
+
+  return { settings, shopCurrencyCode, shopCurrencySymbol };
 };
 
 export const action = async ({ request }) => {
@@ -71,7 +86,7 @@ export const action = async ({ request }) => {
 };
 
 export default function GeneralSettings() {
-  const { settings } = useLoaderData();
+  const { settings, shopCurrencyCode, shopCurrencySymbol } = useLoaderData();
   const fetcher = useFetcher();
   const analyticsF = useFetcher({ key: "analytics-tab" });
   const shopify = useAppBridge();
@@ -121,8 +136,6 @@ export default function GeneralSettings() {
   const [ocuHeading,         setOcuHeading]         = useState(s.ocuHeading ?? "Complete your order");
   const [ocuLabel,           setOcuLabel]           = useState(s.ocuLabel ?? "Add to your order");
   const [ocuHideWhenInCart,  setOcuHideWhenInCart]  = useState(s.ocuHideWhenInCart ?? true);
-  const [currencyCode,       setCurrencyCode]       = useState(s.currencyCode ?? "USD");
-  const [currencySymbol,     setCurrencySymbol]     = useState(s.currencySymbol ?? "$");
   const [locale,             setLocale]             = useState(s.locale ?? "en-US");
   const [ocuProduct,         setOcuProduct]         = useState(
     s.ocuProductVariantId ? {
@@ -147,7 +160,7 @@ export default function GeneralSettings() {
       customCss, customJs, customCartIconSelector,
       clickableLineItems, addToCartBehavior, addToCartToastSeconds,
       orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct,
-      currencyCode, currencySymbol, locale,
+      locale,
     });
   }
   const savedSnap = useRef(snap());
@@ -162,7 +175,7 @@ export default function GeneralSettings() {
       tieredRewardsEnabled, tieredRewards, scrollableItems, showLineItemProperties, blockCartPage,
       customCss, customJs, customCartIconSelector, clickableLineItems, addToCartBehavior,
       addToCartToastSeconds, orderSummaryEnabled, ocuEnabled, ocuHeading, ocuLabel, ocuHideWhenInCart, ocuProduct,
-      currencyCode, currencySymbol, locale]);
+      locale]);
 
   useEffect(() => {
     if (fetcher.data?.success) {
@@ -221,8 +234,6 @@ export default function GeneralSettings() {
       imageUrl: s.ocuProductImageUrl || "",
       price: s.ocuProductPrice || 0,
     } : null);
-    setCurrencyCode(s.currencyCode ?? "USD");
-    setCurrencySymbol(s.currencySymbol ?? "$");
     setLocale(s.locale ?? "en-US");
   }
 
@@ -270,8 +281,8 @@ export default function GeneralSettings() {
         ocuProductTitle:         ocuProduct?.title || "",
         ocuProductImageUrl:      ocuProduct?.imageUrl || "",
         ocuProductPrice:         String(ocuProduct?.price || 0),
-        currencyCode,
-        currencySymbol,
+        currencyCode:            shopCurrencyCode,
+        currencySymbol:          shopCurrencySymbol,
         locale,
       },
       { method: "POST" }
@@ -306,7 +317,7 @@ export default function GeneralSettings() {
     tieredRewardsEnabled, tieredRewards,
     discountEnabled, autoDiscountEnabled, autoDiscountCode,
     orderNotesEnabled, showVariantTitle, showLineItemProperties,
-    currencySymbol,
+    currencySymbol: shopCurrencySymbol,
   };
 
   return (
@@ -339,29 +350,24 @@ export default function GeneralSettings() {
           {/* ── Localization ── */}
       <s-section heading="Localization">
         <s-stack direction="block" gap="base">
-          <div style={{ display: "flex", gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <label style={labelStyle}>Currency</label>
-              <select value={currencyCode} onChange={e => {
-                const map = { USD:"$",EUR:"€",GBP:"£",INR:"₹",AUD:"A$",CAD:"C$",JPY:"¥",AED:"د.إ",SGD:"S$",ZAR:"R",BRL:"R$",MXN:"$",SEK:"kr",NOK:"kr",DKK:"kr",CHF:"Fr",PLN:"zł",TRY:"₺",SAR:"﷼",HKD:"HK$",NZD:"NZ$",KWD:"KD",QAR:"﷼",EGP:"E£",PKR:"₨",BDT:"৳",NGN:"₦",KES:"KSh",THB:"฿",IDR:"Rp",MYR:"RM",PHP:"₱",VND:"₫",TWD:"NT$",KRW:"₩",CNY:"¥",CZK:"Kč",HUF:"Ft",RON:"lei",UAH:"₴",ILS:"₪",MAD:"د.م."};
-                setCurrencyCode(e.target.value);
-                setCurrencySymbol(map[e.target.value] || e.target.value);
-              }} style={{ ...inputStyle, padding: "8px 10px" }}>
-                {[["USD","US Dollar ($)"],["EUR","Euro (€)"],["GBP","British Pound (£)"],["INR","Indian Rupee (₹)"],["AUD","Australian Dollar (A$)"],["CAD","Canadian Dollar (C$)"],["JPY","Japanese Yen (¥)"],["AED","UAE Dirham (د.إ)"],["SGD","Singapore Dollar (S$)"],["ZAR","South African Rand (R)"],["BRL","Brazilian Real (R$)"],["MXN","Mexican Peso ($)"],["SEK","Swedish Krona (kr)"],["NOK","Norwegian Krone (kr)"],["DKK","Danish Krone (kr)"],["CHF","Swiss Franc (Fr)"],["PLN","Polish Złoty (zł)"],["TRY","Turkish Lira (₺)"],["SAR","Saudi Riyal (﷼)"],["HKD","HK Dollar (HK$)"],["NZD","NZ Dollar (NZ$)"],["KWD","Kuwaiti Dinar (KD)"],["QAR","Qatari Riyal (﷼)"],["EGP","Egyptian Pound (E£)"],["PKR","Pakistani Rupee (₨)"],["BDT","Bangladeshi Taka (৳)"],["NGN","Nigerian Naira (₦)"],["KES","Kenyan Shilling (KSh)"],["THB","Thai Baht (฿)"],["IDR","Indonesian Rupiah (Rp)"],["MYR","Malaysian Ringgit (RM)"],["PHP","Philippine Peso (₱)"],["VND","Vietnamese Dong (₫)"],["KRW","South Korean Won (₩)"],["TWD","Taiwan Dollar (NT$)"],["CNY","Chinese Yuan (¥)"],["CZK","Czech Koruna (Kč)"],["HUF","Hungarian Forint (Ft)"],["RON","Romanian Leu (lei)"],["UAH","Ukrainian Hryvnia (₴)"],["ILS","Israeli Shekel (₪)"],["MAD","Moroccan Dirham (د.م.)"]].map(([c,l]) => (
-                  <option key={c} value={c}>{c} – {l}</option>
-                ))}
-              </select>
-              <p style={helpText}>Updates all currency labels in this settings page.</p>
+          <div>
+            <label style={labelStyle}>Store Currency</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", border: "1.5px solid #e0e0e0", borderRadius: 8, background: "#f9fafb", fontSize: 14, color: "#111" }}>
+              <span style={{ fontWeight: 700 }}>{shopCurrencyCode}</span>
+              <span style={{ color: "#bbb" }}>—</span>
+              <span style={{ fontWeight: 600 }}>{shopCurrencySymbol}</span>
+              <span style={{ marginLeft: "auto", fontSize: 12, color: "#6b7280" }}>Auto-detected from your Shopify store</span>
             </div>
-            <div style={{ flex: 1 }}>
-              <label style={labelStyle}>Language / Locale</label>
-              <select value={locale} onChange={e => setLocale(e.target.value)} style={{ ...inputStyle, padding: "8px 10px" }}>
-                {[["en-US","English – United States"],["en-GB","English – United Kingdom"],["en-AU","English – Australia"],["en-IN","English – India"],["fr-FR","French – France"],["de-DE","German – Germany"],["es-ES","Spanish – Spain"],["es-MX","Spanish – Mexico"],["it-IT","Italian – Italy"],["pt-BR","Portuguese – Brazil"],["pt-PT","Portuguese – Portugal"],["nl-NL","Dutch"],["sv-SE","Swedish"],["pl-PL","Polish"],["tr-TR","Turkish"],["ja-JP","Japanese"],["ko-KR","Korean"],["zh-CN","Chinese – Simplified"],["ar-SA","Arabic"],["hi-IN","Hindi"]].map(([c,l]) => (
-                  <option key={c} value={c}>{c} – {l}</option>
-                ))}
-              </select>
-              <p style={helpText}>Controls how prices are formatted (decimal separators, symbol position). Also used in the side cart for number formatting.</p>
-            </div>
+            <p style={helpText}>Read from Shopify Admin → Settings → Store details → Store currency. To change it, update your store settings in Shopify.</p>
+          </div>
+          <div>
+            <label style={labelStyle}>Language / Locale</label>
+            <select value={locale} onChange={e => setLocale(e.target.value)} style={{ ...inputStyle, padding: "8px 10px" }}>
+              {[["en-US","English – United States"],["en-GB","English – United Kingdom"],["en-AU","English – Australia"],["en-IN","English – India"],["fr-FR","French – France"],["de-DE","German – Germany"],["es-ES","Spanish – Spain"],["es-MX","Spanish – Mexico"],["it-IT","Italian – Italy"],["pt-BR","Portuguese – Brazil"],["pt-PT","Portuguese – Portugal"],["nl-NL","Dutch"],["sv-SE","Swedish"],["pl-PL","Polish"],["tr-TR","Turkish"],["ja-JP","Japanese"],["ko-KR","Korean"],["zh-CN","Chinese – Simplified"],["ar-SA","Arabic"],["hi-IN","Hindi"]].map(([c,l]) => (
+                <option key={c} value={c}>{c} – {l}</option>
+              ))}
+            </select>
+            <p style={helpText}>Controls how prices are formatted (decimal separators, symbol position).</p>
           </div>
         </s-stack>
       </s-section>
@@ -741,7 +747,7 @@ export default function GeneralSettings() {
         ocuLabel={ocuLabel} setOcuLabel={setOcuLabel}
         ocuHideWhenInCart={ocuHideWhenInCart} setOcuHideWhenInCart={setOcuHideWhenInCart}
         ocuProduct={ocuProduct} setOcuProduct={setOcuProduct}
-        currencySymbol={currencySymbol}
+        currencySymbol={shopCurrencySymbol}
       />
 
       {/* ── Custom Code ── */}
