@@ -25,8 +25,16 @@ api_version = "2025-07"
   topics = [ "app/scopes_update" ]
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
-  uri = "https://edgesidecart.onrender.com/webhooks"
+  uri = "/webhooks/customers/data_request"
+  topics = ["customers/data_request"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/customers/redact"
+  topics = ["customers/redact"]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/shop/redact"
+  topics = ["shop/redact"]
 
 [auth]
 redirect_urls = [
@@ -36,5 +44,4 @@ redirect_urls = [
 ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = false
