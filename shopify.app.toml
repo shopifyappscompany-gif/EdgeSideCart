@@ -24,6 +24,10 @@ api_version = "2025-07"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "https://edgesidecart.onrender.com/webhooks"
+
 [auth]
 redirect_urls = [
   "https://edgesidecart.onrender.com/auth/callback",
