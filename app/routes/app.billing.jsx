@@ -18,12 +18,15 @@ export const loader = async ({ request }) => {
   const { billing, session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const { appSubscriptions } = await billing.check({
-    plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-    isTest: process.env.NODE_ENV !== "production",
-  });
-  const activeSub  = appSubscriptions?.[0] ?? null;
-  const activePlan = activeSub?.name ?? "Starter";
+  /* Defensive: never let a billing read crash the page (renders Starter on error) */
+  let activePlan = "Starter";
+  try {
+    const { appSubscriptions } = await billing.check({
+      plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
+      isTest: process.env.NODE_ENV !== "production",
+    });
+    activePlan = appSubscriptions?.[0]?.name ?? "Starter";
+  } catch (_) {}
 
   /* 30-day order count */
   let orderCount = 0;
@@ -146,7 +149,7 @@ function Tick({ color }) {
 }
 
 export default function BillingPage() {
-  const { activePlan, orderCount, planName, freeForever } = useLoaderData();
+  const { activePlan, orderCount, planName, freeForever, shop } = useLoaderData();
   const navigate = useNavigate();
 
   /* Live Shopify subscription is the source of truth under Shopify App Pricing.
@@ -167,7 +170,9 @@ export default function BillingPage() {
      to Shopify App Pricing, creating recurring charges via the Billing API is
      disabled and returns an error — that was the cause of the 500. */
   function handlePlan() {
-    window.open(`shopify://admin/charges/${APP_HANDLE}/pricing_plans`, "_top");
+    const storeHandle = (shop || "").replace(".myshopify.com", "");
+    const url = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+    window.open(url, "_top");
   }
 
   return (
