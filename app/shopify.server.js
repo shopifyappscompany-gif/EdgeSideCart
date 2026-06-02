@@ -25,18 +25,29 @@ const shopify = shopifyApp({
   future: {
     expiringOfflineAccessTokens: true,
   },
+  /* Billing API config — v1.x requires the line-items format (a flat
+     amount/currencyCode/interval throws "Invalid billing configuration … must
+     be … a subscription plan with line items"). */
   billing: {
     [PLAN_GROWTH]: {
-      amount: 7.00,
-      currencyCode: "USD",
-      interval: BillingInterval.Every30Days,
       trialDays: 7,
+      lineItems: [
+        {
+          amount: 7.00,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
     },
     [PLAN_ENTERPRISE]: {
-      amount: 19.00,
-      currencyCode: "USD",
-      interval: BillingInterval.Every30Days,
       trialDays: 7,
+      lineItems: [
+        {
+          amount: 19.00,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
     },
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN
