@@ -11,6 +11,23 @@ import prisma from "../db.server";
 const PLAN_GROWTH     = "Growth";  // $7/mo — up to 200 orders
 const PLAN_ENTERPRISE = "Scale";   // $19/mo — 200+ orders, unlimited
 
+/* Development / partner stores can ONLY accept test charges; real stores must
+   get a real charge. Creating a real charge on a dev store throws "The shop
+   cannot accept the provided charge", and billing.check must use the same flag
+   to find a subscription, so we derive isTest from the shop's plan. */
+async function resolveIsTest(admin) {
+  try {
+    const res  = await admin.graphql(
+      `#graphql
+       query { shop { plan { partnerDevelopment } } }`
+    );
+    const json = await res.json();
+    return json?.data?.shop?.plan?.partnerDevelopment === true;
+  } catch (_) {
+    return process.env.NODE_ENV !== "production";
+  }
+}
+
 /* ── Loader ────────────────────────────────────────────────── */
 export const loader = async ({ request }) => {
   const { billing, session, admin } = await authenticate.admin(request);
@@ -19,9 +36,10 @@ export const loader = async ({ request }) => {
   /* Defensive: never let a billing read crash the page (renders Starter on error) */
   let activePlan = "Starter";
   try {
+    const isTest = await resolveIsTest(admin);
     const { appSubscriptions } = await billing.check({
       plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-      isTest: process.env.NODE_ENV !== "production",
+      isTest,
     });
     activePlan = appSubscriptions?.[0]?.name ?? "Starter";
   } catch (_) {}
@@ -66,7 +84,7 @@ const REAUTH_URL_HEADER = "X-Shopify-API-Request-Failure-Reauthorize-Url";
    client can redirect the top frame to it itself. On approval Shopify activates
    the recurring charge and returns the merchant to returnUrl. */
 export const action = async ({ request }) => {
-  const { billing, session } = await authenticate.admin(request);
+  const { billing, session, admin } = await authenticate.admin(request);
   const shop     = session.shop;
   const formData = await request.formData();
   const intent   = formData.get("intent");
@@ -74,15 +92,17 @@ export const action = async ({ request }) => {
   /* App origin for the post-approval return. Fall back to the request origin so
      a missing SHOPIFY_APP_URL env var can never produce "undefined/app/billing". */
   const appUrl = process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
-  const isTest = process.env.NODE_ENV !== "production";
+  const isTest = await resolveIsTest(admin);
 
   if (intent === "subscribe") {
     const plan = formData.get("plan"); // "Growth" | "Scale"
-    await prisma.cartSettings.upsert({
-      where:  { shop },
-      create: { shop, planName: String(plan).toLowerCase() },
-      update: { planName: String(plan).toLowerCase() },
-    });
+    try {
+      await prisma.cartSettings.upsert({
+        where:  { shop },
+        create: { shop, planName: String(plan).toLowerCase() },
+        update: { planName: String(plan).toLowerCase() },
+      });
+    } catch (_) {}
     try {
       await billing.request({ plan, isTest, returnUrl: `${appUrl}/app/billing` });
     } catch (thrown) {
@@ -114,11 +134,13 @@ export const action = async ({ request }) => {
       const sub = appSubscriptions?.[0];
       if (sub) await billing.cancel({ subscriptionId: sub.id, isTest, prorate: true });
     } catch (_) {}
-    await prisma.cartSettings.upsert({
-      where:  { shop },
-      create: { shop, planName: "starter" },
-      update: { planName: "starter" },
-    });
+    try {
+      await prisma.cartSettings.upsert({
+        where:  { shop },
+        create: { shop, planName: "starter" },
+        update: { planName: "starter" },
+      });
+    } catch (_) {}
     return { success: true };
   }
 
