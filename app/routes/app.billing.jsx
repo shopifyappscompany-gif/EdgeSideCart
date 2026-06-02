@@ -1,6 +1,8 @@
-import { useLoaderData, useNavigate, useSubmit } from "react-router";
+import { useEffect } from "react";
+import { useLoaderData, useNavigate, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { useRouteError } from "react-router";
 import prisma from "../db.server";
 
 /* Plan name strings defined here — NOT imported from shopify.server
@@ -49,13 +51,17 @@ export const loader = async ({ request }) => {
   };
 };
 
+/* Header the library puts the charge-approval URL into when billing.request
+   throws for an XHR (App Bridge fetch) request. */
+const REAUTH_URL_HEADER = "X-Shopify-API-Request-Failure-Reauthorize-Url";
+
 /* ── Action ────────────────────────────────────────────────────
-   Billing API flow. IMPORTANT: billing.request() does NOT return a URL — it
-   THROWS a Response (a 401 carrying an App Bridge "reauthorize" header) that
-   App Bridge uses to send the merchant to Shopify's native charge-approval
-   page. So we must let it throw: no try/catch around it, no capturing a return
-   value, and nothing meaningful after it. On approval Shopify activates the
-   recurring charge and redirects back to returnUrl. */
+   Billing API flow. billing.request() does NOT return a URL — it THROWS a
+   Response carrying Shopify's native charge-approval URL. Rather than let that
+   bubble to the client (which made App Bridge/React Router crash), we catch it
+   here, pull the URL out of the header, and hand it back as plain JSON so the
+   client can redirect the top frame to it itself. On approval Shopify activates
+   the recurring charge and returns the merchant to returnUrl. */
 export const action = async ({ request }) => {
   const { billing, session } = await authenticate.admin(request);
   const shop     = session.shop;
@@ -74,8 +80,15 @@ export const action = async ({ request }) => {
       create: { shop, planName: String(plan).toLowerCase() },
       update: { planName: String(plan).toLowerCase() },
     });
-    /* Throws the App Bridge redirect Response to Shopify's approval page. */
-    await billing.request({ plan, isTest, returnUrl: `${appUrl}/app/billing` });
+    try {
+      await billing.request({ plan, isTest, returnUrl: `${appUrl}/app/billing` });
+    } catch (thrown) {
+      if (thrown instanceof Response) {
+        const url = thrown.headers.get(REAUTH_URL_HEADER) || thrown.headers.get("Location");
+        if (url) return { confirmationUrl: url };
+      }
+      throw thrown;
+    }
     return null; // unreachable
   }
 
@@ -189,7 +202,18 @@ function Tick({ color }) {
 export default function BillingPage() {
   const { activePlan, orderCount, planName, freeForever } = useLoaderData();
   const navigate = useNavigate();
-  const submit   = useSubmit();
+  const fetcher  = useFetcher();
+
+  /* When the action returns the charge-approval URL, send the whole admin tab
+     there (it's an admin.shopify.com URL, so a top-frame navigation is allowed
+     from inside the embedded iframe). */
+  useEffect(() => {
+    const url = fetcher.data?.confirmationUrl;
+    if (url) {
+      try { (window.top ?? window).location.href = url; }
+      catch (_) { window.location.href = url; }
+    }
+  }, [fetcher.data]);
 
   /* Live Shopify subscription is the source of truth for the current plan;
      fall back to the locally stored plan name. */
@@ -200,16 +224,18 @@ export default function BillingPage() {
   const overLimit  = (currentKey === "starter" && orderCount > 40) ||
                      (currentKey === "growth"  && orderCount > 200);
 
-  /* Submit through React Router so the request carries the App Bridge session
-     token. For "subscribe", the action throws a 401 with a reauthorize header
-     that App Bridge uses to redirect the merchant to Shopify's native
-     charge-approval page. For "cancel", the loader revalidates on completion. */
+  const busy = fetcher.state !== "idle";
+
+  /* Submit through the fetcher so the request carries the App Bridge session
+     token. "subscribe" returns { confirmationUrl } -> the effect above redirects
+     to Shopify's native approval page. "cancel" revalidates the loader. */
   function handlePlan(plan) {
+    if (busy) return;
     if (plan.key === "starter") {
-      submit({ intent: "cancel" }, { method: "post" });
+      fetcher.submit({ intent: "cancel" }, { method: "post" });
       return;
     }
-    submit({ intent: "subscribe", plan: plan.billingKey }, { method: "post" });
+    fetcher.submit({ intent: "subscribe", plan: plan.billingKey }, { method: "post" });
   }
 
   return (
@@ -409,5 +435,5 @@ export default function BillingPage() {
 }
 
 export function ErrorBoundary() {
-  return boundary.error();
+  return boundary.error(useRouteError());
 }
