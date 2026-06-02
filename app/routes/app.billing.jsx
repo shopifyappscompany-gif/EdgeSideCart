@@ -40,7 +40,10 @@ export const loader = async ({ request }) => {
     orderCount = json?.data?.ordersCount ?? 0;
   } catch (_) {}
 
-  const settings = await prisma.cartSettings.findUnique({ where: { shop } });
+  let settings = null;
+  try {
+    settings = await prisma.cartSettings.findUnique({ where: { shop } });
+  } catch (_) {}
 
   return {
     activePlan,
@@ -83,13 +86,23 @@ export const action = async ({ request }) => {
     try {
       await billing.request({ plan, isTest, returnUrl: `${appUrl}/app/billing` });
     } catch (thrown) {
+      /* Success path: the library throws a Response carrying the approval URL. */
       if (thrown instanceof Response) {
         const url = thrown.headers.get(REAUTH_URL_HEADER) || thrown.headers.get("Location");
         if (url) return { confirmationUrl: url };
+        return { error: `Billing request failed (HTTP ${thrown.status}).` };
       }
-      throw thrown;
+      /* A real error (not the redirect). Most common cause: the app is still on
+         Shopify App Pricing in the Partner Dashboard, which blocks Billing API
+         charges. Surface it instead of throwing an "Application Error". */
+      console.error("billing.request failed:", thrown);
+      return {
+        error:
+          (thrown && thrown.message) ||
+          "Could not start the subscription. In the Partner Dashboard set this app's pricing to “Manual pricing (Billing API)”, not Shopify App Pricing.",
+      };
     }
-    return null; // unreachable
+    return null; // unreachable on success (redirect URL returned above)
   }
 
   if (intent === "cancel") {
@@ -240,6 +253,16 @@ export default function BillingPage() {
 
   return (
     <s-page heading="Plans & Pricing">
+
+      {/* Billing error (e.g. app still on Shopify App Pricing, blocking the Billing API) */}
+      {fetcher.data?.error && (
+        <div style={{
+          padding: "12px 16px", background: "#fef2f2", border: "1px solid #fecaca",
+          borderRadius: 10, marginBottom: 16, color: "#b91c1c", fontSize: 13, fontWeight: 500,
+        }}>
+          ⚠️ {fetcher.data.error}
+        </div>
+      )}
 
       {/* Order count banner */}
       <div style={{
