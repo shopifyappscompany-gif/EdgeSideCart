@@ -1,13 +1,17 @@
-import { useLoaderData, useNavigate, useSubmit } from "react-router";
+import { useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 
 /* Plan name strings defined here — NOT imported from shopify.server
-   (server-only modules cannot be referenced by client-side component code).
-   These MUST match the keys in the `billing` config in app/shopify.server.js */
+   (server-only modules cannot be referenced by client-side component code) */
 const PLAN_GROWTH     = "Growth";  // $7/mo — up to 200 orders
 const PLAN_ENTERPRISE = "Scale";   // $19/mo — 200+ orders, unlimited
+
+/* Shopify-assigned app handle, taken from the admin URL
+   admin.shopify.com/store/<store>/apps/edgecart-1 — used to build the
+   Shopify-hosted Shopify App Pricing (Managed Pricing) plan-selection URL. */
+const APP_HANDLE = "edgecart-1";
 
 /* ── Loader ────────────────────────────────────────────────── */
 export const loader = async ({ request }) => {
@@ -49,55 +53,13 @@ export const loader = async ({ request }) => {
   };
 };
 
-/* ── Action ────────────────────────────────────────────────────
-   Billing API flow. IMPORTANT: billing.request() does NOT return a URL — it
-   THROWS a Response (a 401 carrying an App Bridge "reauthorize" header) that
-   App Bridge uses to send the merchant to Shopify's native charge-approval
-   page. So we must let it throw: no try/catch around it, no capturing a return
-   value, and nothing meaningful after it. On approval Shopify activates the
-   recurring charge and redirects back to returnUrl. */
-export const action = async ({ request }) => {
-  const { billing, session } = await authenticate.admin(request);
-  const shop     = session.shop;
-  const formData = await request.formData();
-  const intent   = formData.get("intent");
-
-  /* App origin for the post-approval return. Fall back to the request origin so
-     a missing SHOPIFY_APP_URL env var can never produce "undefined/app/billing". */
-  const appUrl = process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
-  const isTest = process.env.NODE_ENV !== "production";
-
-  if (intent === "subscribe") {
-    const plan = formData.get("plan"); // "Growth" | "Scale"
-    await prisma.cartSettings.upsert({
-      where:  { shop },
-      create: { shop, planName: String(plan).toLowerCase() },
-      update: { planName: String(plan).toLowerCase() },
-    });
-    /* Throws the App Bridge redirect Response to Shopify's approval page. */
-    await billing.request({ plan, isTest, returnUrl: `${appUrl}/app/billing` });
-    return null; // unreachable
-  }
-
-  if (intent === "cancel") {
-    try {
-      const { appSubscriptions } = await billing.check({
-        plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-        isTest,
-      });
-      const sub = appSubscriptions?.[0];
-      if (sub) await billing.cancel({ subscriptionId: sub.id, isTest, prorate: true });
-    } catch (_) {}
-    await prisma.cartSettings.upsert({
-      where:  { shop },
-      create: { shop, planName: "starter" },
-      update: { planName: "starter" },
-    });
-    return { success: true };
-  }
-
-  return { error: "Unknown intent" };
-};
+/* ── No action ─────────────────────────────────────────────────
+   Under Shopify App Pricing (Managed Pricing) the app must NOT create or cancel
+   charges through the Billing API — Shopify's hosted plan-selection page does
+   that. Subscribing, upgrading and downgrading all happen there, so this route
+   needs no action. (The previous Billing API `billing.request` action returned
+   a 500 because charge creation is disabled once the app opts into App Pricing.)
+   ────────────────────────────────────────────────────────────── */
 
 /* ── Plan definitions ─────────────────────────────────────── */
 const PLANS = [
@@ -187,12 +149,11 @@ function Tick({ color }) {
 }
 
 export default function BillingPage() {
-  const { activePlan, orderCount, planName, freeForever } = useLoaderData();
+  const { activePlan, orderCount, planName, freeForever, shop } = useLoaderData();
   const navigate = useNavigate();
-  const submit   = useSubmit();
 
-  /* Live Shopify subscription is the source of truth for the current plan;
-     fall back to the locally stored plan name. */
+  /* Live Shopify subscription is the source of truth under Shopify App Pricing.
+     Map it to a plan key, falling back to the locally stored plan name. */
   const activeKey  = activePlan === "Growth" ? "growth"
                    : activePlan === "Scale"  ? "enterprise"
                    : null;
@@ -200,16 +161,28 @@ export default function BillingPage() {
   const overLimit  = (currentKey === "starter" && orderCount > 40) ||
                      (currentKey === "growth"  && orderCount > 200);
 
-  /* Submit through React Router so the request carries the App Bridge session
-     token. For "subscribe", the action throws a 401 with a reauthorize header
-     that App Bridge uses to redirect the merchant to Shopify's native
-     charge-approval page. For "cancel", the loader revalidates on completion. */
-  function handlePlan(plan) {
-    if (plan.key === "starter") {
-      submit({ intent: "cancel" }, { method: "post" });
+  /* Shopify App Pricing (Managed Pricing): every plan change happens on
+     Shopify's hosted plan-selection page. Redirect the top window there and
+     Shopify handles charge approval, the free trial, proration, upgrades and
+     downgrades, then sends the merchant back to the app.
+
+     We do NOT call the Billing API (billing.request) here: once an app opts in
+     to Shopify App Pricing, creating recurring charges via the Billing API is
+     disabled and returns an error — that was the cause of the 500. */
+  function handlePlan() {
+    const storeHandle = (shop || "").replace(".myshopify.com", "");
+    const url = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+    /* Break the merchant out of the embedded iframe to Shopify's hosted plan
+       page. Try top-frame nav first (works with the embedded sandbox under a
+       user gesture); fall back to App Bridge's shopify:// scheme, then self. */
+    try {
+      if (window.top) { window.top.location.href = url; return; }
+    } catch (_) {}
+    try {
+      window.open(`shopify://admin/charges/${APP_HANDLE}/pricing_plans`, "_top");
       return;
-    }
-    submit({ intent: "subscribe", plan: plan.billingKey }, { method: "post" });
+    } catch (_) {}
+    window.location.href = url;
   }
 
   return (
