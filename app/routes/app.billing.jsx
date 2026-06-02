@@ -97,9 +97,12 @@ export const action = async ({ request }) => {
 
   /* After approval Shopify redirects the TOP window to returnUrl. Point it at the
      embedded admin deep link so the app reloads with a valid session — returning
-     to the raw app URL has no session and dumps the merchant on the login page. */
+     to the raw app URL has no session and dumps the merchant on the login page.
+     Use the app's client ID (stable) like Corner Cart does, falling back to the
+     handle. Shopify appends ?charge_id=... on redirect. */
   const storeHandle = (shop || "").replace(".myshopify.com", "");
-  const returnUrl   = `https://admin.shopify.com/store/${storeHandle}/apps/${APP_HANDLE}/app/billing`;
+  const appRef      = process.env.SHOPIFY_API_KEY || APP_HANDLE;
+  const returnUrl   = `https://admin.shopify.com/store/${storeHandle}/apps/${appRef}/app/billing`;
   const isTest      = await resolveIsTest(admin);
 
   if (intent === "subscribe") {
