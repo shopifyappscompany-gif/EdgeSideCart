@@ -39,15 +39,24 @@ export const loader = async ({ request }) => {
   const { billing, session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  /* Defensive: never let a billing read crash the page (renders Starter on error) */
+  /* Read the merchant's CURRENT active subscription straight from Shopify. This
+     returns active subscriptions regardless of the test flag, so the UI always
+     matches what Shopify shows (billing.check needs a matching isTest, which can
+     disagree and make a paid merchant look "free"). Never throws to the page. */
   let activePlan = "Starter";
   try {
-    const isTest = await resolveIsTest(admin);
-    const { appSubscriptions } = await billing.check({
-      plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-      isTest,
-    });
-    activePlan = appSubscriptions?.[0]?.name ?? "Starter";
+    const res = await admin.graphql(
+      `#graphql
+       query {
+         currentAppInstallation {
+           activeSubscriptions { name status }
+         }
+       }`
+    );
+    const json = await res.json();
+    const subs = json?.data?.currentAppInstallation?.activeSubscriptions ?? [];
+    const active = subs.find((s) => s.status === "ACTIVE") ?? subs[0];
+    if (active?.name) activePlan = active.name;
   } catch (_) {}
 
   /* 30-day order count */
@@ -246,7 +255,7 @@ function Tick({ color }) {
 }
 
 export default function BillingPage() {
-  const { activePlan, orderCount, planName, freeForever } = useLoaderData();
+  const { activePlan, orderCount, freeForever } = useLoaderData();
   const navigate = useNavigate();
   const fetcher  = useFetcher();
 
@@ -261,12 +270,15 @@ export default function BillingPage() {
     }
   }, [fetcher.data]);
 
-  /* Live Shopify subscription is the source of truth for the current plan;
-     fall back to the locally stored plan name. */
+  /* The active Shopify subscription (from the loader) is the single source of
+     truth: "Growth"/"Scale" map to their card keys, anything else is the free
+     Starter plan. (Previously this fell back to a stored planName like "scale",
+     which never matched the Scale card's key "enterprise" — so an approved
+     merchant showed as "free".) */
   const activeKey  = activePlan === "Growth" ? "growth"
                    : activePlan === "Scale"  ? "enterprise"
-                   : null;
-  const currentKey = freeForever ? "forever-free" : (activeKey || planName || "starter");
+                   : "starter";
+  const currentKey = freeForever ? "forever-free" : activeKey;
   const overLimit  = (currentKey === "starter" && orderCount > 40) ||
                      (currentKey === "growth"  && orderCount > 200);
 
