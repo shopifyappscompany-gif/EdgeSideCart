@@ -172,7 +172,17 @@ export default function BillingPage() {
   function handlePlan() {
     const storeHandle = (shop || "").replace(".myshopify.com", "");
     const url = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
-    window.open(url, "_top");
+    /* Break the merchant out of the embedded iframe to Shopify's hosted plan
+       page. Try top-frame nav first (works with the embedded sandbox under a
+       user gesture); fall back to App Bridge's shopify:// scheme, then self. */
+    try {
+      if (window.top) { window.top.location.href = url; return; }
+    } catch (_) {}
+    try {
+      window.open(`shopify://admin/charges/${APP_HANDLE}/pricing_plans`, "_top");
+      return;
+    } catch (_) {}
+    window.location.href = url;
   }
 
   return (
@@ -246,6 +256,7 @@ export default function BillingPage() {
               {!plan.trial && !plan.note && <div style={{ marginBottom: 16 }} />}
 
               <button
+                type="button"
                 onClick={() => !isCurrent && handlePlan(plan)}
                 disabled={isCurrent}
                 style={{
