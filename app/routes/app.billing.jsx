@@ -11,6 +11,12 @@ import prisma from "../db.server";
 const PLAN_GROWTH     = "Growth";  // $7/mo — up to 200 orders
 const PLAN_ENTERPRISE = "Scale";   // $19/mo — 200+ orders, unlimited
 
+/* Shopify-assigned app handle (from admin URL .../apps/edgecart-1/...). Used to
+   build a post-approval returnUrl that lands the merchant back INSIDE the
+   embedded admin, instead of on the raw app URL (which has no session and
+   bounces to the login page). */
+const APP_HANDLE = "edgecart-1";
+
 /* Development / partner stores can ONLY accept test charges; real stores must
    get a real charge. Creating a real charge on a dev store throws "The shop
    cannot accept the provided charge", and billing.check must use the same flag
@@ -89,10 +95,12 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent   = formData.get("intent");
 
-  /* App origin for the post-approval return. Fall back to the request origin so
-     a missing SHOPIFY_APP_URL env var can never produce "undefined/app/billing". */
-  const appUrl = process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
-  const isTest = await resolveIsTest(admin);
+  /* After approval Shopify redirects the TOP window to returnUrl. Point it at the
+     embedded admin deep link so the app reloads with a valid session — returning
+     to the raw app URL has no session and dumps the merchant on the login page. */
+  const storeHandle = (shop || "").replace(".myshopify.com", "");
+  const returnUrl   = `https://admin.shopify.com/store/${storeHandle}/apps/${APP_HANDLE}/app/billing`;
+  const isTest      = await resolveIsTest(admin);
 
   if (intent === "subscribe") {
     const plan = formData.get("plan"); // "Growth" | "Scale"
@@ -104,7 +112,7 @@ export const action = async ({ request }) => {
       });
     } catch (_) {}
     try {
-      await billing.request({ plan, isTest, returnUrl: `${appUrl}/app/billing` });
+      await billing.request({ plan, isTest, returnUrl });
     } catch (thrown) {
       /* Success path: the library throws a Response carrying the approval URL. */
       if (thrown instanceof Response) {
