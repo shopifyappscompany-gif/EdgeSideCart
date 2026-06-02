@@ -8,17 +8,25 @@ import prisma from "../db.server";
 const PLAN_GROWTH     = "Growth";  // $7/mo — up to 200 orders
 const PLAN_ENTERPRISE = "Scale";   // $19/mo — 200+ orders, unlimited
 
+/* Shopify-assigned app handle, taken from the admin URL
+   admin.shopify.com/store/<store>/apps/edgecart-1 — used to build the
+   Shopify-hosted Shopify App Pricing (Managed Pricing) plan-selection URL. */
+const APP_HANDLE = "edgecart-1";
+
 /* ── Loader ────────────────────────────────────────────────── */
 export const loader = async ({ request }) => {
   const { billing, session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
-  const { appSubscriptions } = await billing.check({
-    plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-    isTest: process.env.NODE_ENV !== "production",
-  });
-  const activeSub  = appSubscriptions?.[0] ?? null;
-  const activePlan = activeSub?.name ?? "Starter";
+  /* Defensive: never let a billing read crash the page (renders Starter on error) */
+  let activePlan = "Starter";
+  try {
+    const { appSubscriptions } = await billing.check({
+      plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
+      isTest: process.env.NODE_ENV !== "production",
+    });
+    activePlan = appSubscriptions?.[0]?.name ?? "Starter";
+  } catch (_) {}
 
   /* 30-day order count */
   let orderCount = 0;
@@ -45,47 +53,13 @@ export const loader = async ({ request }) => {
   };
 };
 
-/* ── Action ────────────────────────────────────────────────── */
-export const action = async ({ request }) => {
-  const { billing, session } = await authenticate.admin(request);
-  const shop   = session.shop;
-  const form   = await request.formData();
-  const intent = form.get("intent");
-  const plan   = form.get("plan");
-
-  if (intent === "subscribe") {
-    const confirmationUrl = await billing.request({
-      plan,
-      isTest:    process.env.NODE_ENV !== "production",
-      returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing`,
-    });
-    await prisma.cartSettings.upsert({
-      where:  { shop },
-      create: { shop, planName: plan.toLowerCase() },
-      update: { planName: plan.toLowerCase() },
-    });
-    return { redirectUrl: confirmationUrl };
-  }
-
-  if (intent === "downgrade") {
-    try {
-      const { appSubscriptions } = await billing.check({
-        plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-        isTest: process.env.NODE_ENV !== "production",
-      });
-      const sub = appSubscriptions?.[0];
-      if (sub) await billing.cancel({ subscriptionId: sub.id, isTest: process.env.NODE_ENV !== "production", prorate: true });
-    } catch (_) {}
-    await prisma.cartSettings.upsert({
-      where:  { shop },
-      create: { shop, planName: "starter" },
-      update: { planName: "starter" },
-    });
-    return { success: true };
-  }
-
-  return { error: "Unknown intent" };
-};
+/* ── No action ─────────────────────────────────────────────────
+   Under Shopify App Pricing (Managed Pricing) the app must NOT create or cancel
+   charges through the Billing API — Shopify's hosted plan-selection page does
+   that. Subscribing, upgrading and downgrading all happen there, so this route
+   needs no action. (The previous Billing API `billing.request` action returned
+   a 500 because charge creation is disabled once the app opts into App Pricing.)
+   ────────────────────────────────────────────────────────────── */
 
 /* ── Plan definitions ─────────────────────────────────────── */
 const PLANS = [
@@ -175,31 +149,40 @@ function Tick({ color }) {
 }
 
 export default function BillingPage() {
-  const { activePlan, orderCount, planName, freeForever } = useLoaderData();
+  const { activePlan, orderCount, planName, freeForever, shop } = useLoaderData();
   const navigate = useNavigate();
 
-  const currentKey = freeForever ? "forever-free" : (planName || "starter");
+  /* Live Shopify subscription is the source of truth under Shopify App Pricing.
+     Map it to a plan key, falling back to the locally stored plan name. */
+  const activeKey  = activePlan === "Growth" ? "growth"
+                   : activePlan === "Scale"  ? "enterprise"
+                   : null;
+  const currentKey = freeForever ? "forever-free" : (activeKey || planName || "starter");
   const overLimit  = (currentKey === "starter" && orderCount > 40) ||
                      (currentKey === "growth"  && orderCount > 200);
 
-  async function handlePlan(plan) {
-    if (plan.key === "starter") {
-      const fd = new FormData();
-      fd.set("intent", "downgrade");
-      const r = await fetch(window.location.href, { method: "POST", body: fd });
-      const d = await r.json().catch(() => ({}));
-      if (d.success) navigate(0);
+  /* Shopify App Pricing (Managed Pricing): every plan change happens on
+     Shopify's hosted plan-selection page. Redirect the top window there and
+     Shopify handles charge approval, the free trial, proration, upgrades and
+     downgrades, then sends the merchant back to the app.
+
+     We do NOT call the Billing API (billing.request) here: once an app opts in
+     to Shopify App Pricing, creating recurring charges via the Billing API is
+     disabled and returns an error — that was the cause of the 500. */
+  function handlePlan() {
+    const storeHandle = (shop || "").replace(".myshopify.com", "");
+    const url = `https://admin.shopify.com/store/${storeHandle}/charges/${APP_HANDLE}/pricing_plans`;
+    /* Break the merchant out of the embedded iframe to Shopify's hosted plan
+       page. Try top-frame nav first (works with the embedded sandbox under a
+       user gesture); fall back to App Bridge's shopify:// scheme, then self. */
+    try {
+      if (window.top) { window.top.location.href = url; return; }
+    } catch (_) {}
+    try {
+      window.open(`shopify://admin/charges/${APP_HANDLE}/pricing_plans`, "_top");
       return;
-    }
-    const fd = new FormData();
-    fd.set("intent", "subscribe");
-    fd.set("plan", plan.billingKey);
-    const r = await fetch(window.location.href, { method: "POST", body: fd });
-    const d = await r.json().catch(() => ({}));
-    if (d.redirectUrl) {
-      try { window.top.location.href = d.redirectUrl; }
-      catch (_) { window.location.href = d.redirectUrl; }
-    }
+    } catch (_) {}
+    window.location.href = url;
   }
 
   return (
@@ -239,7 +222,7 @@ export default function BillingPage() {
       {/* Plan cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 20, marginBottom: 44 }}>
         {PLANS.map(plan => {
-          const isCurrent = planName === plan.key || (plan.key === "starter" && !["growth","enterprise"].includes(planName));
+          const isCurrent = currentKey === plan.key || (plan.key === "starter" && !["growth","enterprise"].includes(currentKey));
           return (
             <div key={plan.key} style={{
               border: `${plan.highlight ? 2 : 1.5}px solid ${plan.highlight ? plan.color : "#e5e7eb"}`,
@@ -273,6 +256,7 @@ export default function BillingPage() {
               {!plan.trial && !plan.note && <div style={{ marginBottom: 16 }} />}
 
               <button
+                type="button"
                 onClick={() => !isCurrent && handlePlan(plan)}
                 disabled={isCurrent}
                 style={{
