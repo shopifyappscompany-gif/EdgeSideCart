@@ -146,14 +146,46 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "cancel") {
+    /* Cancel whatever subscription Shopify ACTUALLY reports active — read the
+       same way the loader does (direct GraphQL, no isTest filter). billing.check
+       only returns subs matching the isTest flag, which can disagree with the
+       real charge; when it did, nothing got cancelled yet we still reported
+       success, so the loader kept showing the live (still-active) paid plan and
+       the downgrade-to-Free button appeared to do nothing. */
+    let cancelError = null;
     try {
-      const { appSubscriptions } = await billing.check({
-        plans: [PLAN_GROWTH, PLAN_ENTERPRISE],
-        isTest,
-      });
-      const sub = appSubscriptions?.[0];
-      if (sub) await billing.cancel({ subscriptionId: sub.id, isTest, prorate: true });
-    } catch (_) {}
+      const res = await admin.graphql(
+        `#graphql
+         query {
+           currentAppInstallation {
+             activeSubscriptions { id status }
+           }
+         }`
+      );
+      const json = await res.json();
+      const subs = json?.data?.currentAppInstallation?.activeSubscriptions ?? [];
+      for (const sub of subs) {
+        if (!sub?.id) continue;
+        const cancelRes = await admin.graphql(
+          `#graphql
+           mutation CancelSub($id: ID!) {
+             appSubscriptionCancel(id: $id) {
+               userErrors { field message }
+             }
+           }`,
+          { variables: { id: sub.id } }
+        );
+        const cancelJson = await cancelRes.json();
+        const errs = cancelJson?.data?.appSubscriptionCancel?.userErrors ?? [];
+        if (errs.length) cancelError = errs.map((e) => e.message).join("; ");
+      }
+    } catch (e) {
+      console.error("billing cancel failed:", e);
+      cancelError = (e && e.message) || "Could not cancel the subscription.";
+    }
+    if (cancelError) {
+      return { error: `Could not downgrade to Free: ${cancelError}` };
+    }
     try {
       await prisma.cartSettings.upsert({
         where:  { shop },
