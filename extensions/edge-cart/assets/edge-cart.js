@@ -278,46 +278,47 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Step 1: validate — check the code exists and is active on Shopify */
+      /* Step 1: validate — check the code exists, is active, and get its type/value
+         so we can compute the in-cart savings preview. */
       var validationData = null;
       var serverReachable = false;
       try {
+        var controller = new AbortController();
+        var tId = setTimeout(function () { controller.abort(); }, 10000);
         var res = await fetch(
           PROXY + "/api/validate-discount?code=" + encodeURIComponent(code),
-          { credentials: "same-origin" }
+          { credentials: "same-origin", signal: controller.signal }
         );
+        clearTimeout(tId);
         if (res.ok) {
           validationData = await res.json();
           serverReachable = true;
         }
-      } catch (_) { /* network error — server unreachable, fall through */ }
+      } catch (_) { /* network error or timeout */ }
 
-      /* If server responded and said invalid → only block on real code errors,
-         not on auth/infra errors (expired session, missing scope, etc.) */
-      if (serverReachable && validationData && validationData.valid === false) {
-        var reason = validationData.reason || "";
-        var isRealCodeError = (
-          reason.indexOf("not found") >= 0 ||
-          reason.indexOf("has expired") >= 0 ||
-          reason.indexOf("not yet active") >= 0 ||
-          reason.indexOf("not active") >= 0 ||
-          reason.indexOf("usage limit") >= 0
-        );
-        if (isRealCodeError) {
-          discountCode    = "";
-          appliedDiscount = null;
-          discountError   = reason;
-          discountLoading = false;
-          if (isOpen) renderFooter();
-          return;
-        }
-        /* Auth/infra error — fall through and apply anyway */
+      /* Server could not be reached — show error so user knows */
+      if (!serverReachable) {
+        discountCode    = "";
+        appliedDiscount = null;
+        discountError   = "Could not validate code. Please try again.";
+        discountLoading = false;
+        if (isOpen) renderFooter();
+        return;
       }
 
-      /* Step 1b: eligibility — the code is valid, but does it apply to THIS cart?
-         (minimum spend / quantity, or specific-product scope.) Native checkout
-         would reject it, so mirror that instead of showing a phantom saving. */
-      if (serverReachable && validationData && validationData.valid) {
+      /* Server responded but code is invalid — always show the reason */
+      if (validationData && validationData.valid === false) {
+        discountCode    = "";
+        appliedDiscount = null;
+        discountError   = validationData.reason || "Invalid discount code.";
+        discountLoading = false;
+        if (isOpen) renderFooter();
+        return;
+      }
+
+      /* Step 1b: code is valid — check it actually applies to THIS cart
+         (minimum spend / quantity, or specific-product scope). */
+      if (validationData && validationData.valid) {
         var elig = discountEligibility(validationData);
         if (!elig.ok) {
           discountCode    = "";
@@ -335,7 +336,7 @@
       /* Step 3: reload cart to get updated totals */
       cart               = await loadCart();
       discountCode       = upperCode;
-      appliedDiscount    = validationData || { valid: true, code: upperCode };
+      appliedDiscount    = validationData;
       discountError      = "";
       discountLoading    = false;
       discountInputValue = "";
