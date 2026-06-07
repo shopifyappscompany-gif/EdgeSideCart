@@ -32,6 +32,8 @@
   var discountError      = "";
   var discountSuccess    = false;
   var discountInputValue = ""; /* preserves typed code while footer re-renders */
+  var sfToken = ""; /* Storefront API token for discount validation */
+  var sfShop  = ""; /* Shopify permanent domain, e.g. "store.myshopify.com" */
   var waDialCode         = "91"; /* selected country dial code (no +) — India default */
   var waLocalNumber      = "";   /* local part of phone entered by customer */
   var orderNote         = "";
@@ -63,6 +65,8 @@
       .then(function (results) {
         settings = results[0];
         cart     = results[1];
+        sfToken  = (settings && settings.storefrontToken) || "";
+        sfShop   = (settings && settings.shop) || SHOP || "";
         if (settings && settings.blockCartPage && window.location.pathname === "/cart") {
           sessionStorage.setItem("ec-reopen-cart", "1");
           var ref = document.referrer;
@@ -243,9 +247,55 @@
     });
   }
 
-  /* Validate via Admin GraphQL, then apply via /discount/CODE iframe.
-     If the server explicitly rejects the code → show error.
-     Uses Shopify's native cart API — no server validation needed. */
+  /* Validate a discount code via the Shopify Storefront API.
+     Returns { valid: true, nativeAmount: <cents> } when applicable,
+     { valid: false } when Shopify explicitly rejects it,
+     or null when the token is unavailable (fall back to checkout-only). */
+  async function validateViaStorefrontAPI(code) {
+    if (!sfToken || !sfShop) return null;
+
+    var items = (cart && cart.items) || [];
+    if (!items.length) return null;
+
+    var lines = items.map(function (item) {
+      return {
+        merchandiseId: "gid://shopify/ProductVariant/" + item.variant_id,
+        quantity: item.quantity,
+      };
+    });
+
+    var mutation = "mutation cartCreate($input:CartInput!){cartCreate(input:$input){cart{discountCodes{code applicable}cost{totalDiscountAmount{amount}}}userErrors{message}}}";
+
+    try {
+      var res = await fetch("https://" + sfShop + "/api/2025-07/graphql.json", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Storefront-Access-Token": sfToken,
+        },
+        body: JSON.stringify({ query: mutation, variables: { input: { lines: lines, discountCodes: [code] } } }),
+      });
+      if (!res.ok) return null;
+      var data = await res.json();
+      var sfCart = data && data.data && data.data.cartCreate && data.data.cartCreate.cart;
+      if (!sfCart) return null;
+
+      var dc = (sfCart.discountCodes || []).find(function (d) {
+        return (d.code || "").toUpperCase() === code.toUpperCase();
+      });
+      if (!dc || !dc.applicable) return { valid: false };
+
+      var discountDollars = parseFloat((sfCart.cost && sfCart.cost.totalDiscountAmount && sfCart.cost.totalDiscountAmount.amount) || "0");
+      return { valid: true, nativeAmount: Math.round(discountDollars * 100) };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /* Apply a discount code:
+     1. Validate via Storefront API to get real savings + reject invalid codes.
+     2. Set Shopify's session cookie via /discount/CODE so the code carries to checkout.
+     3. Store result so discountSavings() reflects the correct deduction in the UI. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -259,25 +309,9 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Step 1: set Shopify's session cookie via native /discount/CODE */
-      await applyDiscountSession(upperCode);
+      var validation = await validateViaStorefrontAPI(upperCode);
 
-      /* Step 2: reload cart — Shopify puts valid codes into discount_applications */
-      cart = await loadCart();
-
-      /* Step 3: check Shopify's own discount_applications for this code */
-      var apps = (cart && cart.discount_applications) || [];
-      var found = null;
-      for (var i = 0; i < apps.length; i++) {
-        var app = apps[i];
-        if (app.type === "discount_code" &&
-            (app.title || "").toUpperCase() === upperCode) {
-          found = app;
-          break;
-        }
-      }
-
-      if (!found) {
+      if (validation && !validation.valid) {
         discountCode    = "";
         appliedDiscount = null;
         discountError   = "Invalid discount code or not applicable to your cart.";
@@ -286,19 +320,18 @@
         return;
       }
 
-      /* Map Shopify's data to our appliedDiscount — use total_allocated_amount
-         for the exact saving so discountSavings() returns the right number */
-      var dtype = "checkout-only";
-      if (found.value_type === "percentage")            dtype = "percentage";
-      if (found.value_type === "fixed_amount")          dtype = "fixed_amount";
-      if (found.value_type === "shipping_discount_amount") dtype = "free_shipping";
+      /* Set Shopify's session cookie so the code is pre-filled at checkout */
+      await applyDiscountSession(upperCode);
+      cart = await loadCart();
+
+      var nativeAmount = (validation && validation.nativeAmount > 0) ? validation.nativeAmount : 0;
 
       discountCode       = upperCode;
       appliedDiscount    = {
         valid: true,
-        type: dtype,
-        nativeAmount: found.total_allocated_amount || 0,
-        appliesToAll: found.target_selection === "all",
+        type: nativeAmount > 0 ? "fixed_amount" : "checkout-only",
+        nativeAmount: nativeAmount,
+        appliesToAll: true,
         code: upperCode,
       };
       discountError      = "";
