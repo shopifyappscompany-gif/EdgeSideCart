@@ -57,6 +57,8 @@ export const action = async ({ request }) => {
     discountEnabled:      form.get("discountEnabled") === "true",
     autoDiscountEnabled:  form.get("autoDiscountEnabled") === "true",
     autoDiscountCode:     String(form.get("autoDiscountCode") || ""),
+    offersEnabled:        form.get("offersEnabled") === "true",
+    configuredDiscounts:  String(form.get("configuredDiscounts") || "[]"),
     orderNotesEnabled:    form.get("orderNotesEnabled") === "true",
     showVariantTitle:     form.get("showVariantTitle") === "true",
     scarcityEnabled:      form.get("scarcityEnabled") === "true",
@@ -124,6 +126,10 @@ export default function GeneralSettings() {
   const [discountEnabled,      setDiscountEnabled]      = useState(s.discountEnabled ?? true);
   const [autoDiscountEnabled,  setAutoDiscountEnabled]  = useState(s.autoDiscountEnabled ?? false);
   const [autoDiscountCode,     setAutoDiscountCode]     = useState(s.autoDiscountCode ?? "");
+  const [offersEnabled,        setOffersEnabled]        = useState(s.offersEnabled ?? false);
+  const [configuredDiscounts,  setConfiguredDiscounts]  = useState(() => {
+    try { return JSON.parse(s.configuredDiscounts || "[]"); } catch { return []; }
+  });
   const [orderNotesEnabled,    setOrderNotesEnabled]    = useState(s.orderNotesEnabled ?? false);
   const [showVariantTitle,     setShowVariantTitle]     = useState(s.showVariantTitle ?? true);
   const [scarcityEnabled,      setScarcityEnabled]      = useState(s.scarcityEnabled ?? false);
@@ -166,6 +172,7 @@ export default function GeneralSettings() {
       bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
       announcementsEnabled, announcements, announcementInterval,
       discountEnabled, autoDiscountEnabled, autoDiscountCode,
+      offersEnabled, configuredDiscounts,
       orderNotesEnabled, showVariantTitle,
       scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
       tieredRewardsEnabled, tieredRewards,
@@ -183,7 +190,8 @@ export default function GeneralSettings() {
     setIsDirty(snap() !== savedSnap.current);
   }, [enabled, headerText, primaryColor, bannerEnabled, bannerText, bannerBgColor, bannerTextColor,
       announcementsEnabled, announcements, announcementInterval,
-      discountEnabled, autoDiscountEnabled, autoDiscountCode, orderNotesEnabled, showVariantTitle,
+      discountEnabled, autoDiscountEnabled, autoDiscountCode, offersEnabled, configuredDiscounts,
+      orderNotesEnabled, showVariantTitle,
       scarcityEnabled, scarcityText, scarcityMinutes, scarcityBgColor, scarcityTextColor,
       tieredRewardsEnabled, tieredRewards, scrollableItems, showLineItemProperties, blockCartPage,
       customCss, customJs, customCartIconSelector, clickableLineItems, addToCartBehavior,
@@ -218,6 +226,8 @@ export default function GeneralSettings() {
     setDiscountEnabled(s.discountEnabled ?? true);
     setAutoDiscountEnabled(s.autoDiscountEnabled ?? false);
     setAutoDiscountCode(s.autoDiscountCode ?? "");
+    setOffersEnabled(s.offersEnabled ?? false);
+    setConfiguredDiscounts(() => { try { return JSON.parse(s.configuredDiscounts || "[]"); } catch { return []; } });
     setOrderNotesEnabled(s.orderNotesEnabled ?? false);
     setShowVariantTitle(s.showVariantTitle ?? true);
     setScarcityEnabled(s.scarcityEnabled ?? false);
@@ -267,6 +277,8 @@ export default function GeneralSettings() {
         discountEnabled:      String(discountEnabled),
         autoDiscountEnabled:  String(autoDiscountEnabled),
         autoDiscountCode,
+        offersEnabled:        String(offersEnabled),
+        configuredDiscounts:  JSON.stringify(configuredDiscounts),
         orderNotesEnabled:    String(orderNotesEnabled),
         showVariantTitle:     String(showVariantTitle),
         scarcityEnabled:      String(scarcityEnabled),
@@ -657,6 +669,53 @@ export default function GeneralSettings() {
               checked={discountEnabled}
               onChange={setDiscountEnabled}
             />
+          </s-stack>
+        </s-section>
+
+        <s-section heading="View All Offers (Coupon List)">
+          <s-stack direction="block" gap="base">
+            <ToggleRow
+              label="Enable View All Offers"
+              desc="Adds a 'View All Offers' link under the discount field. Customers see your codes (e.g. JACK5) and apply with one tap."
+              checked={offersEnabled}
+              onChange={setOffersEnabled}
+            />
+            {offersEnabled && (
+              <>
+                {configuredDiscounts.map((c, idx) => (
+                  <div key={c.id} style={{ border: "1.5px solid #e0e0e0", borderRadius: 10, padding: 14, background: "#fafafa" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <strong style={{ fontSize: 13 }}>Coupon {idx + 1}</strong>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <ToggleInline checked={c.enabled !== false} onChange={v => setConfiguredDiscounts(configuredDiscounts.map((x, i) => i === idx ? { ...x, enabled: v } : x))} />
+                        <button onClick={() => setConfiguredDiscounts(configuredDiscounts.filter((_, i) => i !== idx))}
+                          style={{ background: "none", border: "none", color: "#e53e3e", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Remove</button>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Discount Code</label>
+                      <input type="text" value={c.code || ""} style={{ ...inputStyle, textTransform: "uppercase", letterSpacing: 1 }}
+                        onChange={e => setConfiguredDiscounts(configuredDiscounts.map((x, i) => i === idx ? { ...x, code: e.target.value.toUpperCase() } : x))}
+                        placeholder="SAVE10" />
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <label style={labelStyle}>Description</label>
+                      <input type="text" value={c.description || ""} style={inputStyle}
+                        onChange={e => setConfiguredDiscounts(configuredDiscounts.map((x, i) => i === idx ? { ...x, description: e.target.value } : x))}
+                        placeholder="10% off on orders above $50" />
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => setConfiguredDiscounts([...configuredDiscounts, { id: "cpn_" + Date.now(), code: "", description: "", enabled: true }])}
+                  style={{ width: "100%", padding: "10px 16px", border: "1.5px dashed #ccc", borderRadius: 8, background: "none", color: "#555", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  + Add Coupon
+                </button>
+                <p style={helpText}>
+                  Each code must be a real, active discount created in Shopify Admin → Discounts.
+                  Shopify validates eligibility when the customer applies it.
+                </p>
+              </>
+            )}
           </s-stack>
         </s-section>
 
