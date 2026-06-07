@@ -58,6 +58,8 @@
   var couponsOpen          = false;   /* "View all coupons" panel expanded? */
   var announcementIndex    = 0;
   var announcementTimer    = null;
+  var lastBannerText       = null;  /* triggers the slide animation only on text change */
+  var collectionCache      = {};    /* collection handle -> array of product id strings (for banner targeting) */
 
   /* ===========================================================
      BOOT
@@ -440,27 +442,93 @@
     syncMaxExceeded();
   }
 
+  /* Conditional banners: an announcement can target the cart. Defaults to "always"
+     so existing banners keep showing. cartValue/quantity/product are resolved from
+     the live cart; collection isn't (cart.js has no collection data) so it shows. */
+  function announcementMatches(ann) {
+    var ct = ann.conditionType || "always";
+    if (ct === "always") return true;
+    if (!cart) return false;
+    if (ct === "cartValue") return (cart.total_price / 100) >= (parseFloat(ann.minCartValue) || 0);
+    if (ct === "quantity")  return (cart.item_count || 0) >= (parseInt(ann.minQuantity, 10) || 0);
+    if (ct === "product") {
+      var ids = (ann.productIds || []).map(function (p) { return String(typeof p === "object" ? extractId(p.id) : p); });
+      if (!ids.length) return true;
+      return (cart.items || []).some(function (i) { return ids.indexOf(String(i.product_id)) !== -1; });
+    }
+    if (ct === "collection") {
+      var handles = (ann.collectionIds || []).map(function (c) { return typeof c === "object" ? c.handle : c; }).filter(Boolean);
+      if (!handles.length) return true;
+      var cartPids = (cart.items || []).map(function (i) { return String(i.product_id); });
+      return handles.some(function (h) {
+        var pids = collectionCache[h];
+        return pids && pids.some(function (pid) { return cartPids.indexOf(pid) !== -1; });
+      });
+    }
+    return true;
+  }
+
+  /* Collection membership isn't in /cart.js, so for collection-targeted banners we
+     fetch each collection's product ids once (storefront products.json) and cache
+     them, then re-render the banner when ready. */
+  function prefetchAnnouncementCollections() {
+    if (!settings || !settings.announcementsEnabled) return;
+    var handles = {};
+    (settings.announcements || []).forEach(function (a) {
+      if (a.conditionType === "collection") {
+        (a.collectionIds || []).forEach(function (c) {
+          var h = typeof c === "object" ? c.handle : c;
+          if (h && !(h in collectionCache)) handles[h] = true;
+        });
+      }
+    });
+    Object.keys(handles).forEach(function (h) {
+      collectionCache[h] = null; /* mark loading */
+      fetch("/collections/" + encodeURIComponent(h) + "/products.json?limit=250", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : { products: [] }; })
+        .then(function (d) {
+          collectionCache[h] = (d.products || []).map(function (p) { return String(p.id); });
+          renderBanner();
+        })
+        .catch(function () { collectionCache[h] = []; });
+    });
+  }
+  function activeAnnouncements() {
+    return (settings.announcements || []).filter(function (a) {
+      return a.enabled !== false && a.text && announcementMatches(a);
+    });
+  }
+
+  /* Sets banner text/colors; slides the new message in only when the text actually
+     changes (so rotation animates, but ordinary re-renders don't flicker). */
+  function setBannerContent(el, text, bg, color) {
+    el.textContent      = text;
+    el.style.display    = "";
+    el.style.background = bg;
+    el.style.color      = color;
+    if (text !== lastBannerText) {
+      el.style.animation = "none";
+      void el.offsetWidth; /* force reflow so the animation restarts */
+      el.style.animation = "ec-banner-slide 0.45s var(--ec-ease)";
+      lastBannerText = text;
+    }
+  }
+
   function renderBanner() {
     var el = id("ec-banner");
     if (!el || !settings) return;
 
     if (settings.announcementsEnabled) {
-      var msgs = (settings.announcements || []).filter(function (a) { return a.enabled !== false && a.text; });
+      var msgs = activeAnnouncements();
       if (msgs.length > 0) {
         var msg = msgs[announcementIndex % msgs.length];
-        el.textContent      = msg.text;
-        el.style.display    = "";
-        el.style.background = msg.bgColor  || "#1a1a1a";
-        el.style.color      = msg.textColor || "#fff";
+        setBannerContent(el, msg.text, msg.bgColor || "#1a1a1a", msg.textColor || "#fff");
         return;
       }
     }
 
     if (settings.bannerEnabled && settings.bannerText) {
-      el.textContent      = settings.bannerText;
-      el.style.display    = "";
-      el.style.background = settings.bannerBgColor || "#1a1a1a";
-      el.style.color      = settings.bannerTextColor || "#fff";
+      setBannerContent(el, settings.bannerText, settings.bannerBgColor || "#1a1a1a", settings.bannerTextColor || "#fff");
     } else {
       el.style.display = "none";
     }
@@ -469,11 +537,12 @@
   function startAnnouncementTimer() {
     stopAnnouncementTimer();
     if (!settings || !settings.announcementsEnabled) return;
-    var msgs = (settings.announcements || []).filter(function (a) { return a.enabled !== false && a.text; });
-    if (msgs.length <= 1) return;
-    var interval = Math.max(2, settings.announcementInterval || 4) * 1000;
+    /* Rotate even if only some banners currently match — the matching set is
+       recomputed each tick so it adapts as the cart changes. */
+    if ((settings.announcements || []).filter(function (a) { return a.enabled !== false && a.text; }).length <= 1) return;
+    var interval = Math.max(1, settings.announcementInterval || 4) * 1000;
     announcementTimer = setInterval(function () {
-      announcementIndex = (announcementIndex + 1) % msgs.length;
+      announcementIndex = announcementIndex + 1;
       renderBanner();
     }, interval);
   }
@@ -801,7 +870,7 @@
               ? (isFreebieLoading
                   ? '<div class="ec-spin-circle ec-spin-circle--sm"></div>'
                   : '<span class="ec-item__free-badge">FREE</span>')
-              : '<button class="ec-item__remove" data-action="remove" data-key="' + esc(item.key) + '" aria-label="Remove">' + svgX() + '</button>',
+              : '<button class="ec-item__remove" data-action="remove" data-key="' + esc(item.key) + '" aria-label="Remove">' + svgTrash() + '</button>',
           '</div>',
           '<div class="ec-item__bottom">',
             freebie
@@ -2286,7 +2355,11 @@
     return [
       '<div class="ec-upsell-wrap">',
         '<p class="ec-upsell-wrap__heading">' + esc(settings.upsellTitle || "You might also like") + '</p>',
-        '<div class="ec-upsell-track">' + cards + '</div>',
+        '<div class="ec-upsell-scroller">',
+          '<div class="ec-upsell-track">' + cards + '</div>',
+          '<button class="ec-upsell-nav ec-upsell-nav--left" data-action="upsell-scroll" data-dir="-1" aria-label="Scroll left">‹</button>',
+          '<button class="ec-upsell-nav ec-upsell-nav--right" data-action="upsell-scroll" data-dir="1" aria-label="Scroll right">›</button>',
+        '</div>',
       '</div>',
     ].join("");
   }
@@ -2553,6 +2626,7 @@
     /* Kick off AI recommendations fetch (async, re-renders footer when ready) */
     fetchAiRecommendations();
     startAnnouncementTimer();
+    prefetchAnnouncementCollections();
   }
 
   function closeCart() {
@@ -2871,6 +2945,14 @@
     var discRemoveBtn = e.target.closest("[data-action='discount-remove']");
     if (discRemoveBtn) { clearDiscount(); return; }
 
+    var upsellScroll = e.target.closest("[data-action='upsell-scroll']");
+    if (upsellScroll) {
+      var scroller = upsellScroll.closest(".ec-upsell-scroller");
+      var track = scroller && scroller.querySelector(".ec-upsell-track");
+      if (track) track.scrollBy({ left: (parseInt(upsellScroll.dataset.dir, 10) || 1) * Math.round(track.clientWidth * 0.8), behavior: "smooth" });
+      return;
+    }
+
     var couponToggle = e.target.closest("[data-action='toggle-coupons']");
     if (couponToggle) { couponsOpen = !couponsOpen; renderFooter(); return; }
 
@@ -3066,6 +3148,9 @@
 
   function svgX() {
     return '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11 3L3 11M3 3l8 8" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>';
+  }
+  function svgTrash() {
+    return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2m2 0v14a1 1 0 01-1 1H7a1 1 0 01-1-1V6h12z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
   }
   function svgChevron() {
     return '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>';
