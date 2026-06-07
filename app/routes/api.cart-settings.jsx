@@ -188,19 +188,29 @@ export const loader = async ({ request }) => {
       });
     }
 
-    // Ensure we have a Storefront access token for client-side discount validation
+    // Ensure we have a Storefront access token for client-side discount validation.
+    // appProxy session may not expose accessToken, so fetch the offline session directly.
     let storefrontToken = settings.storefrontToken;
-    if (!storefrontToken && session?.accessToken) {
+    if (!storefrontToken) {
       try {
-        storefrontToken = await getOrCreateStorefrontToken(shop, session.accessToken);
-        if (storefrontToken) {
-          await prisma.cartSettings.update({
-            where: { shop },
-            data: { storefrontToken },
-          });
+        const offlineSession = await prisma.session.findFirst({
+          where: { shop, isOnline: false },
+          select: { accessToken: true },
+        });
+        const accessToken = offlineSession?.accessToken || session?.accessToken;
+        console.log(`[EdgeCart] generating storefront token for ${shop}, hasToken=${!!accessToken}`);
+        if (accessToken) {
+          storefrontToken = await getOrCreateStorefrontToken(shop, accessToken);
+          if (storefrontToken) {
+            await prisma.cartSettings.update({
+              where: { shop },
+              data: { storefrontToken },
+            });
+            console.log(`[EdgeCart] storefront token saved for ${shop}`);
+          }
         }
-      } catch (_) {
-        // Non-fatal — discount validation will fall back to checkout-only mode
+      } catch (err) {
+        console.error(`[EdgeCart] storefront token generation failed for ${shop}:`, err.message);
       }
     }
 
