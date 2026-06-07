@@ -242,36 +242,39 @@ function safeParseJSON(str, fallback) {
 }
 
 async function getOrCreateStorefrontToken(shop, accessToken) {
-  const gqlUrl = `https://${shop}/admin/api/2025-07/graphql.json`;
+  const base = `https://${shop}/admin/api/2025-07`;
   const headers = {
     "Content-Type": "application/json",
     "X-Shopify-Access-Token": accessToken,
   };
 
-  // List existing tokens — reuse one titled "edge-cart" if present
-  const listRes = await fetch(gqlUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      query: `{ storefrontAccessTokens(first: 100) { edges { node { accessToken title } } } }`,
-    }),
-  });
-  const listData = await listRes.json();
-  const existing = (listData?.data?.storefrontAccessTokens?.edges || [])
-    .map((e) => e.node)
-    .find((t) => t.title === "edge-cart");
-  if (existing) return existing.accessToken;
+  // Reuse an existing token titled "edge-cart" to stay within the 100-token limit
+  const listRes = await fetch(`${base}/storefront_access_tokens.json`, { headers });
+  if (listRes.ok) {
+    const listData = await listRes.json();
+    const existing = (listData?.storefront_access_tokens || []).find((t) => t.title === "edge-cart");
+    if (existing) {
+      console.log(`[EdgeCart] reusing storefront token for ${shop}`);
+      return existing.access_token;
+    }
+  } else {
+    console.warn(`[EdgeCart] list storefront tokens failed for ${shop}: ${listRes.status}`);
+  }
 
-  // Create a new one
-  const createRes = await fetch(gqlUrl, {
+  // Create a new token
+  const createRes = await fetch(`${base}/storefront_access_tokens.json`, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      query: `mutation { storefrontAccessTokenCreate(input: { title: "edge-cart" }) { storefrontAccessToken { accessToken } userErrors { message } } }`,
-    }),
+    body: JSON.stringify({ storefront_access_token: { title: "edge-cart" } }),
   });
-  const createData = await createRes.json();
-  return createData?.data?.storefrontAccessTokenCreate?.storefrontAccessToken?.accessToken || null;
+  if (createRes.ok) {
+    const createData = await createRes.json();
+    const token = createData?.storefront_access_token?.access_token || null;
+    if (token) console.log(`[EdgeCart] created storefront token for ${shop}`);
+    return token;
+  }
+  console.warn(`[EdgeCart] create storefront token failed for ${shop}: ${createRes.status} ${await createRes.text()}`);
+  return null;
 }
 
 function buildFreebieOffers(s) {
