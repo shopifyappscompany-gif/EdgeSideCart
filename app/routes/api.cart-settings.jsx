@@ -177,7 +177,7 @@ export const loader = async ({ request }) => {
       });
     }
 
-    const settings = await prisma.cartSettings.findUnique({
+    let settings = await prisma.cartSettings.findUnique({
       where: { shop },
     });
 
@@ -188,9 +188,27 @@ export const loader = async ({ request }) => {
       });
     }
 
+    // Ensure we have a Storefront access token for client-side discount validation
+    let storefrontToken = settings.storefrontToken;
+    if (!storefrontToken && session?.accessToken) {
+      try {
+        storefrontToken = await getOrCreateStorefrontToken(shop, session.accessToken);
+        if (storefrontToken) {
+          await prisma.cartSettings.update({
+            where: { shop },
+            data: { storefrontToken },
+          });
+        }
+      } catch (_) {
+        // Non-fatal — discount validation will fall back to checkout-only mode
+      }
+    }
+
     const payload = {
       ...DEFAULT_SETTINGS,
       ...settings,
+      storefrontToken: storefrontToken || null,
+      shop,
       configuredDiscounts: safeParseJSON(settings.configuredDiscounts, []),
       upsellProducts: safeParseJSON(settings.upsellProducts, []),
       upsellTriggerProductIds: safeParseJSON(settings.upsellTriggerProductIds, []),
@@ -221,6 +239,39 @@ export const loader = async ({ request }) => {
 
 function safeParseJSON(str, fallback) {
   try { return JSON.parse(str); } catch { return fallback; }
+}
+
+async function getOrCreateStorefrontToken(shop, accessToken) {
+  const gqlUrl = `https://${shop}/admin/api/2025-07/graphql.json`;
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Shopify-Access-Token": accessToken,
+  };
+
+  // List existing tokens — reuse one titled "edge-cart" if present
+  const listRes = await fetch(gqlUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      query: `{ storefrontAccessTokens(first: 100) { edges { node { accessToken title } } } }`,
+    }),
+  });
+  const listData = await listRes.json();
+  const existing = (listData?.data?.storefrontAccessTokens?.edges || [])
+    .map((e) => e.node)
+    .find((t) => t.title === "edge-cart");
+  if (existing) return existing.accessToken;
+
+  // Create a new one
+  const createRes = await fetch(gqlUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      query: `mutation { storefrontAccessTokenCreate(input: { title: "edge-cart" }) { storefrontAccessToken { accessToken } userErrors { message } } }`,
+    }),
+  });
+  const createData = await createRes.json();
+  return createData?.data?.storefrontAccessTokenCreate?.storefrontAccessToken?.accessToken || null;
 }
 
 function buildFreebieOffers(s) {
