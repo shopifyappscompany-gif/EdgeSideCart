@@ -647,8 +647,8 @@ export default function GeneralSettings() {
         </s-stack>
       </s-section>
 
-      {/* ── Discount Code — hidden ── */}
-      <div style={{ display: "none" }}>
+      {/* ── Discount Code ── */}
+      <div>
         <s-section heading="Discount Code">
           <s-stack direction="block" gap="base">
             <ToggleRow
