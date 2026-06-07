@@ -163,15 +163,83 @@
     }).then(function (r) { return r.json(); });
   }
 
-  /* Returns Shopify's own discount total from /cart.js — never calculated manually. */
+  /* Code discounts are NOT reflected by Shopify's AJAX Cart API: /cart.js only
+     shows automatic/script discounts, never a manually-entered code (those apply
+     at checkout). So we size the code's value ourselves from the validated
+     discount data + current cart for the in-cart preview. The code is still
+     applied for real at checkout via ?discount=CODE. */
+  function gidToId(gid) {
+    var m = String(gid || "").match(/(\d+)\s*$/);
+    return m ? m[1] : "";
+  }
+  function lineEligibleForDiscount(line, d) {
+    if (!d || d.appliesToAll) return true;
+    var pid = String(line.product_id || "");
+    var vid = String(line.variant_id || "");
+    var i;
+    if (d.productIds && d.productIds.length) {
+      for (i = 0; i < d.productIds.length; i++) if (gidToId(d.productIds[i]) === pid) return true;
+    }
+    if (d.variantIds && d.variantIds.length) {
+      for (i = 0; i < d.variantIds.length; i++) if (gidToId(d.variantIds[i]) === vid) return true;
+    }
+    /* Collection-scoped codes: membership can't be resolved on the storefront, so
+       we don't size them here — Shopify applies the real amount at checkout. */
+    return false;
+  }
+  /* The CODE discount amount (in cents) for the current cart. Returns 0 for types
+     we can't accurately size client-side (free shipping, BxGy, collection scope);
+     those still apply correctly at checkout. */
   function discountSavings() {
-    if (!cart || !appliedDiscount) return 0;
-    return cart.total_discount || 0;
+    if (!cart || !appliedDiscount || appliedDiscount.valid === false) return 0;
+    var d = appliedDiscount;
+    if (d.type === "free_shipping" || d.type === "bxgy") return 0;
+    var items = cart.items || [];
+    var base = 0, qty = 0, i;
+    if (d.appliesToAll) {
+      base = cart.total_price; qty = cart.item_count;
+    } else {
+      for (i = 0; i < items.length; i++) {
+        if (lineEligibleForDiscount(items[i], d)) { base += items[i].final_line_price; qty += items[i].quantity; }
+      }
+    }
+    if (base <= 0) return 0;
+    if (d.type === "percentage") {
+      var pct = d.value > 1 ? d.value / 100 : d.value; /* Shopify sends 0.05 for 5% */
+      return Math.max(0, Math.round(base * pct));
+    }
+    if (d.type === "fixed_amount") {
+      var off = d.appliesOnEachItem ? d.value * qty : d.value; /* d.value already in cents */
+      return Math.min(off, base);
+    }
+    return 0;
+  }
+  /* Is a valid code actually usable on THIS cart? Mirrors what native checkout
+     would enforce: minimum spend / quantity, and specific-product scope. */
+  function discountEligibility(d) {
+    var items = cart.items || [];
+    var mr = d.minimumRequirement;
+    if (mr) {
+      if (mr.type === "subtotal") {
+        var need = Math.round((mr.subtotal || 0) * 100);
+        if (cart.total_price < need) return { ok: false, message: "Add " + money(need - cart.total_price) + " more to use this code" };
+      } else if (mr.type === "quantity") {
+        if ((cart.item_count || 0) < mr.quantity) return { ok: false, message: "Add " + (mr.quantity - (cart.item_count || 0)) + " more item(s) to use this code" };
+      }
+    }
+    if (!d.appliesToAll && d.type !== "free_shipping" && d.type !== "bxgy" &&
+        ((d.productIds && d.productIds.length) || (d.variantIds && d.variantIds.length))) {
+      var hasEligible = false;
+      for (var i = 0; i < items.length; i++) { if (lineEligibleForDiscount(items[i], d)) { hasEligible = true; break; } }
+      if (!hasEligible) return { ok: false, message: "This code doesn't apply to the items in your cart" };
+    }
+    return { ok: true };
   }
 
-  /* Applies /discount/CODE in a hidden iframe — a real page navigation that makes
-     Shopify set its session cookie. /cart.js then returns the correct post-discount
-     total_price, original_total_price, and total_discount automatically. */
+  /* Loads /discount/CODE in a hidden iframe so Shopify sets its discount session
+     cookie — this makes the code carry into checkout. NOTE: /cart.js does NOT
+     reflect typed codes, so the in-cart preview amount comes from discountSavings()
+     and the code is applied for real at checkout (via ?discount=CODE). */
   function applyDiscountSession(code) {
     return new Promise(function (resolve) {
       var done = false, timer = null;
@@ -244,6 +312,21 @@
           return;
         }
         /* Auth/infra error — fall through and apply anyway */
+      }
+
+      /* Step 1b: eligibility — the code is valid, but does it apply to THIS cart?
+         (minimum spend / quantity, or specific-product scope.) Native checkout
+         would reject it, so mirror that instead of showing a phantom saving. */
+      if (serverReachable && validationData && validationData.valid) {
+        var elig = discountEligibility(validationData);
+        if (!elig.ok) {
+          discountCode    = "";
+          appliedDiscount = null;
+          discountError   = elig.message;
+          discountLoading = false;
+          if (isOpen) renderFooter();
+          return;
+        }
       }
 
       /* Step 2: apply — set Shopify session cookie via hidden iframe */
@@ -730,7 +813,9 @@
        total_price is post-discount; original_total_price is pre-discount. */
     var savings    = discountSavings();
     var subtotal   = savings > 0 ? cart.original_total_price : cart.total_price;
-    var finalTotal = cart.total_price;
+    /* total_price is the AJAX-cart total (incl. automatic discounts but NOT the
+       typed code); subtract the computed code saving for the displayed total. */
+    var finalTotal = Math.max(0, cart.total_price - savings);
     var html = "";
 
     /* Freebie — skip when shown at top of body */
@@ -770,13 +855,13 @@
       } else {
         html += [
           '<div class="ec-discount">',
-            '<label class="ec-discount__label" for="ec-disc-input">Discount code or gift card</label>',
+            '<label class="ec-discount__label" for="ec-disc-input">Discount code</label>',
             '<div class="ec-discount__wrap">',
               '<input class="ec-discount__input" id="ec-disc-input" type="text" ',
                 'placeholder="Enter code" ',
                 'value="' + esc(discountInputValue) + '" ',
                 'autocomplete="off" spellcheck="false" ',
-                'aria-label="Discount code or gift card"' + (discountLoading ? ' disabled' : '') + '>',
+                'aria-label="Discount code"' + (discountLoading ? ' disabled' : '') + '>',
               '<button class="ec-discount__apply" id="ec-disc-apply"' + (discountLoading || !discountInputValue.trim() ? ' disabled' : '') + '>',
                 discountLoading ? 'Applying…' : 'Apply',
               '</button>',
@@ -819,7 +904,9 @@
 
       /* Order Summary — placed directly above the checkout button */
       if (settings.orderSummaryEnabled !== false) {
-        var autoDisc2   = cart.original_total_price - cart.total_price - savings;
+        /* Automatic (line/script) discount = what /cart.js already took off. The
+           code saving is separate (not in total_price), so don't subtract it here. */
+        var autoDisc2   = cart.original_total_price - cart.total_price;
         var totalSaved2 = (autoDisc2 > 0 ? autoDisc2 : 0) + savings;
         var savingsPct2 = cart.original_total_price > 0
           ? Math.round((totalSaved2 / cart.original_total_price) * 100) : 0;
