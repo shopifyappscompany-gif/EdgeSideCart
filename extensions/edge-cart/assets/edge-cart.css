@@ -1343,6 +1343,15 @@ a.ec-item__title--link:hover {
   color: #6b7280;
   font-weight: 400;
 }
+.ec-os__row-sublabel {
+  display: block;
+  font-size: 11px;
+  color: #9ca3af;
+  font-weight: 400;
+  margin-top: 2px;
+  max-width: 230px;
+  line-height: 1.3;
+}
 .ec-os__row-price {
   font-size: 12px;
   font-weight: 600;

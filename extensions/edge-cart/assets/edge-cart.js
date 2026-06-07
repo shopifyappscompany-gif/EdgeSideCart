@@ -831,6 +831,17 @@
     });
   }
 
+  /* Merchant-configured description for a code (from the View All Offers list),
+     shown in the order summary so the customer sees what the discount is. */
+  function couponDescription(code) {
+    if (!code) return "";
+    var list = (settings && settings.configuredDiscounts) || [];
+    for (var i = 0; i < list.length; i++) {
+      if ((list[i].code || "").toUpperCase() === String(code).toUpperCase()) return list[i].description || "";
+    }
+    return "";
+  }
+
   /* "View all coupons" trigger + expandable list of coupon cards (screenshot UI).
      Codes come from app settings; tapping Apply runs the same validated flow as
      the discount field, so eligibility is enforced by Shopify. */
@@ -988,7 +999,7 @@
             '<div class="ec-os__row"><span class="ec-os__row-label">Discount on MRP</span><span class="ec-os__row-green">−' + money(autoDisc2) + '</span></div>',
             '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(subtotal2) + '</span></div>',
           ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(subtotal2) + '</span></div>',
-          codeDisc2 > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(codeDisc2) + '</span></div>' : "",
+          codeDisc2 > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + (couponDescription(discountCode) ? '<span class="ec-os__row-sublabel">' + esc(couponDescription(discountCode)) + '</span>' : '') + '</span><span class="ec-os__row-green">−' + money(codeDisc2) + '</span></div>' : "",
           '<div class="ec-os__row"><span class="ec-os__row-label">Shipping</span><span class="ec-os__row-free">FREE</span></div>',
           totalSaved2 > 0 ? '<div class="ec-os__row ec-os__row--savings"><span class="ec-os__row-label">Total savings</span><span class="ec-os__row-green ec-os__row-green--bold">' + money(totalSaved2) + '</span></div>' : "",
           '<div class="ec-os__divider"></div>',
