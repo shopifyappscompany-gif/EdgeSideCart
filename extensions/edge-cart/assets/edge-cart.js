@@ -147,15 +147,18 @@
     });
   }
 
-  function cartChange(key, quantity) {
-    /* Prefer the 1-based line number over the line key: when a discount code is
-       applied Shopify re-keys discounted line items, so a key captured before the
-       discount no longer matches and /cart/change.js silently rejects the change
-       (this is why removing a discounted product "didn't work"). The line index
-       is stable regardless of discounts. Falls back to the key if not found. */
+  function cartChange(key, quantity, useLineIndex) {
+    /* Default: identify the line by its KEY (position-independent, the original
+       behavior — safe for automatic flows like freebie/OCU/gift-wrap removal that
+       can run against a momentarily stale cart).
+       useLineIndex=true: identify by 1-based line number instead. Only the
+       user-initiated line-item controls use this, because when a discount code is
+       applied Shopify re-keys discounted lines so the stale key no longer matches
+       and the change is silently rejected (the "can't remove a discounted product"
+       bug). The user path runs on a settled cart, so the index is reliable there. */
     var body = { quantity: quantity };
     var idx = -1;
-    if (cart && cart.items) {
+    if (useLineIndex && cart && cart.items) {
       for (var i = 0; i < cart.items.length; i++) {
         if (cart.items[i].key === key) { idx = i + 1; break; }
       }
@@ -1335,9 +1338,17 @@
     if (freebieAutoSync[offer.id]) return;
     if (!cart) return;
 
-    var numId       = extractId(offer.productVariantId);
-    var freebieItem = cart.items.find(function (i) { return String(i.variant_id) === numId; });
-    var realItems   = cart.items.filter(function (i) { return String(i.variant_id) !== numId; });
+    var numId = extractId(offer.productVariantId);
+    /* A freebie line is one we added with the _edge_cart_freebie tag — NOT just any
+       line matching the variant. Matching by variant alone wrongly treats the
+       customer's own PAID product (when it shares the freebie's variant) as the
+       freebie, so removing the freebie deleted their paid item and adding looked
+       like a duplicate. Identifying by the tag fixes both. */
+    function isThisFreebie(i) {
+      return i.properties && i.properties._edge_cart_freebie === "true" && String(i.variant_id) === numId;
+    }
+    var freebieItem = cart.items.find(isThisFreebie);
+    var realItems   = cart.items.filter(function (i) { return !isThisFreebie(i); });
 
     if (!freebieItem && realItems.length === 0) return;
 
@@ -2855,7 +2866,7 @@
   function doCartChange(key, qty) {
     updatingKeys[key] = true;
     renderBody();
-    cartChange(key, qty)
+    cartChange(key, qty, true) /* user-initiated: use line index so discounted lines remove correctly */
       .then(function () {
         delete updatingKeys[key];
         aiSeedProductId = null; /* invalidate AI cache — cart composition changed */
