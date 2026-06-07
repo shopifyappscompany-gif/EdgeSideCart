@@ -49,6 +49,7 @@
   var maxExceededNotified  = {};   /* keyed by offer.id — prevents toast spam */
   var tierUnlockedState    = {};   /* keyed by tier.id — fires confetti on unlock transition */
   var ecHandlingAdd        = false;
+  var lastNativeAddAt      = 0;     /* timestamp of a theme-fired /cart/add we observed (not ours) */
   var scarcityTimer        = null;
   var inventoryCache       = {};   /* keyed by variant_id — stores inventory_quantity */
   var inventoryFetching    = {};   /* keyed by handle — prevents duplicate in-flight fetches */
@@ -552,16 +553,26 @@
       if (currentVal < tiers[i].threshold) { nextTier = tiers[i]; break; }
     }
 
+    /* Highest tier already reached — so we can name the reward the customer has earned. */
+    var unlockedTier = null;
+    for (var u = tiers.length - 1; u >= 0; u--) {
+      if (currentVal >= tiers[u].threshold) { unlockedTier = tiers[u]; break; }
+    }
+    var unlockedName = unlockedTier ? (unlockedTier.unlockedLabel || unlockedTier.label || "your reward") : "";
+
     var msg;
     if (!nextTier) {
-      msg = "🎉 All rewards unlocked!";
+      /* Everything unlocked — name the top reward they've earned */
+      msg = unlockedName ? "🎉 You've unlocked " + unlockedName + "!" : "🎉 All rewards unlocked!";
     } else {
       var rem    = nextTier.threshold - currentVal;
       var remFmt = useQty
         ? Math.ceil(rem) + " item" + (Math.ceil(rem) !== 1 ? "s" : "")
         : money(Math.max(0, rem) * 100);
       var rewardName = nextTier.unlockedLabel || nextTier.label || "next reward";
-      msg = "Add More Worth " + remFmt + " for " + rewardName;
+      msg = unlockedTier
+        ? "🎉 " + unlockedName + " unlocked! Add " + remFmt + " more for " + rewardName
+        : "Add More Worth " + remFmt + " for " + rewardName;
     }
 
     var fillPct = maxVal > 0 ? Math.min(100, Math.round((currentVal / maxVal) * 100)) : 100;
@@ -2694,6 +2705,7 @@
       if (!ecHandlingAdd && initialized) {
         var url = typeof input === "string" ? input : (input && input.url) ? input.url : "";
         if (url && url.includes("/cart/add")) {
+          lastNativeAddAt = Date.now(); /* theme added — used to dedupe a duplicate form-submit add */
           promise.then(function (res) {
             if (res && res.ok) {
               var cloned = res.clone();
@@ -2716,6 +2728,7 @@
     };
     XMLHttpRequest.prototype.send = function () {
       if (!ecHandlingAdd && initialized && this._ecUrl && this._ecUrl.includes("/cart/add")) {
+        lastNativeAddAt = Date.now(); /* theme added — used to dedupe a duplicate form-submit add */
         var xhr = this;
         xhr.addEventListener("load", function () {
           if (xhr.status >= 200 && xhr.status < 300) {
@@ -2742,6 +2755,15 @@
       var vid = fd.get("id");
       var qty = parseInt(fd.get("quantity") || "1", 10);
       if (!vid) { form.submit(); return; }
+
+      /* Some themes' add-to-cart button fires its OWN AJAX /cart/add AND lets the
+         form submit — which would add the item twice. If we just observed a native
+         add (within ~1.2s), the theme already added it; just open/refresh the cart
+         instead of adding again. */
+      if (Date.now() - lastNativeAddAt < 1200) {
+        handlePostAdd(null);
+        return;
+      }
 
       setSubmitBtnLoading(form, true);
       cartAdd(vid, qty, {})
@@ -2866,7 +2888,7 @@
   function doCartChange(key, qty) {
     updatingKeys[key] = true;
     renderBody();
-    cartChange(key, qty, true) /* user-initiated: use line index so discounted lines remove correctly */
+    cartChange(key, qty) /* key-based: targets the exact line, so qty/remove never hits a neighbouring line (e.g. X vs Y in Buy X Get Y) */
       .then(function () {
         delete updatingKeys[key];
         aiSeedProductId = null; /* invalidate AI cache — cart composition changed */
