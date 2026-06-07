@@ -187,31 +187,13 @@
        we don't size them here — Shopify applies the real amount at checkout. */
     return false;
   }
-  /* The CODE discount amount (in cents) for the current cart. Returns 0 for types
-     we can't accurately size client-side (free shipping, BxGy, collection scope);
-     those still apply correctly at checkout. */
+  /* Savings in cents for the applied code discount.
+     Uses Shopify's own total_allocated_amount from cart.discount_applications
+     so the number is always correct — no manual computation needed. */
   function discountSavings() {
-    if (!cart || !appliedDiscount || appliedDiscount.valid === false) return 0;
+    if (!cart || !appliedDiscount) return 0;
     var d = appliedDiscount;
-    if (d.type === "free_shipping" || d.type === "bxgy") return 0;
-    var items = cart.items || [];
-    var base = 0, qty = 0, i;
-    if (d.appliesToAll) {
-      base = cart.total_price; qty = cart.item_count;
-    } else {
-      for (i = 0; i < items.length; i++) {
-        if (lineEligibleForDiscount(items[i], d)) { base += items[i].final_line_price; qty += items[i].quantity; }
-      }
-    }
-    if (base <= 0) return 0;
-    if (d.type === "percentage") {
-      var pct = d.value > 1 ? d.value / 100 : d.value; /* Shopify sends 0.05 for 5% */
-      return Math.max(0, Math.round(base * pct));
-    }
-    if (d.type === "fixed_amount") {
-      var off = d.appliesOnEachItem ? d.value * qty : d.value; /* d.value already in cents */
-      return Math.min(off, base);
-    }
+    if (d.nativeAmount > 0) return d.nativeAmount;
     return 0;
   }
   /* Is a valid code actually usable on THIS cart? Mirrors what native checkout
@@ -263,8 +245,7 @@
 
   /* Validate via Admin GraphQL, then apply via /discount/CODE iframe.
      If the server explicitly rejects the code → show error.
-     If the server itself is unreachable (proxy/network error) → apply anyway
-     so valid codes are never blocked by infra issues. */
+     Uses Shopify's native cart API — no server validation needed. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -278,65 +259,48 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Step 1: validate — check the code exists, is active, and get its type/value
-         so we can compute the in-cart savings preview. */
-      var validationData = null;
-      var serverReachable = false;
-      try {
-        var controller = new AbortController();
-        var tId = setTimeout(function () { controller.abort(); }, 10000);
-        var res = await fetch(
-          PROXY + "/api/validate-discount?code=" + encodeURIComponent(code),
-          { credentials: "same-origin", signal: controller.signal }
-        );
-        clearTimeout(tId);
-        if (res.ok) {
-          validationData = await res.json();
-          serverReachable = true;
-        }
-      } catch (_) { /* network error or timeout */ }
-
-      /* Server could not be reached — show error so user knows */
-      if (!serverReachable) {
-        discountCode    = "";
-        appliedDiscount = null;
-        discountError   = "Could not validate code. Please try again.";
-        discountLoading = false;
-        if (isOpen) renderFooter();
-        return;
-      }
-
-      /* Server responded but code is invalid — always show the reason */
-      if (validationData && validationData.valid === false) {
-        discountCode    = "";
-        appliedDiscount = null;
-        discountError   = validationData.reason || "Invalid discount code.";
-        discountLoading = false;
-        if (isOpen) renderFooter();
-        return;
-      }
-
-      /* Step 1b: code is valid — check it actually applies to THIS cart
-         (minimum spend / quantity, or specific-product scope). */
-      if (validationData && validationData.valid) {
-        var elig = discountEligibility(validationData);
-        if (!elig.ok) {
-          discountCode    = "";
-          appliedDiscount = null;
-          discountError   = elig.message;
-          discountLoading = false;
-          if (isOpen) renderFooter();
-          return;
-        }
-      }
-
-      /* Step 2: apply — set Shopify session cookie via hidden iframe */
+      /* Step 1: set Shopify's session cookie via native /discount/CODE */
       await applyDiscountSession(upperCode);
 
-      /* Step 3: reload cart to get updated totals */
-      cart               = await loadCart();
+      /* Step 2: reload cart — Shopify puts valid codes into discount_applications */
+      cart = await loadCart();
+
+      /* Step 3: check Shopify's own discount_applications for this code */
+      var apps = (cart && cart.discount_applications) || [];
+      var found = null;
+      for (var i = 0; i < apps.length; i++) {
+        var app = apps[i];
+        if (app.type === "discount_code" &&
+            (app.title || "").toUpperCase() === upperCode) {
+          found = app;
+          break;
+        }
+      }
+
+      if (!found) {
+        discountCode    = "";
+        appliedDiscount = null;
+        discountError   = "Invalid discount code or not applicable to your cart.";
+        discountLoading = false;
+        if (isOpen) renderFooter();
+        return;
+      }
+
+      /* Map Shopify's data to our appliedDiscount — use total_allocated_amount
+         for the exact saving so discountSavings() returns the right number */
+      var dtype = "checkout-only";
+      if (found.value_type === "percentage")            dtype = "percentage";
+      if (found.value_type === "fixed_amount")          dtype = "fixed_amount";
+      if (found.value_type === "shipping_discount_amount") dtype = "free_shipping";
+
       discountCode       = upperCode;
-      appliedDiscount    = validationData;
+      appliedDiscount    = {
+        valid: true,
+        type: dtype,
+        nativeAmount: found.total_allocated_amount || 0,
+        appliesToAll: found.target_selection === "all",
+        code: upperCode,
+      };
       discountError      = "";
       discountLoading    = false;
       discountInputValue = "";
