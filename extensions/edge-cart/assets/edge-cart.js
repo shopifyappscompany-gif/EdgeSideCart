@@ -266,7 +266,7 @@
 
     /* cost.totalDiscountAmount does NOT exist on CartCost in Shopify's Storefront API.
        The correct source is per-line discountAllocations.discountedAmount. */
-    var mutation = "mutation cartCreate($input:CartInput!){cartCreate(input:$input){cart{discountCodes{code applicable}lines(first:250){edges{node{discountAllocations{discountedAmount{amount}}}}}}userErrors{message}}}";
+    var mutation = "mutation cartCreate($input:CartInput!){cartCreate(input:$input){cart{discountCodes{code applicable}discountAllocations{discountedAmount{amount}}lines(first:250){edges{node{discountAllocations{discountedAmount{amount}}}}}}userErrors{message}}}";
 
     try {
       var res = await fetch("https://" + sfShop + "/api/2025-07/graphql.json", {
@@ -287,8 +287,15 @@
       });
       if (!dc || !dc.applicable) return { valid: false };
 
-      /* Sum discount allocations across all line items to get the total saving */
+      /* Sum discount allocations to get the total saving. Order-level codes (e.g.
+         "5% off order") are allocated at the CART level; product-level codes at the
+         LINE level. With a single code only one level is populated, so summing both
+         is exact and never double-counts. */
       var totalDiscount = 0;
+      var cartAllocs = sfCart.discountAllocations || [];
+      for (var k = 0; k < cartAllocs.length; k++) {
+        totalDiscount += parseFloat((cartAllocs[k].discountedAmount && cartAllocs[k].discountedAmount.amount) || "0");
+      }
       var sfLines = (sfCart.lines && sfCart.lines.edges) || [];
       for (var i = 0; i < sfLines.length; i++) {
         var allocs = (sfLines[i].node && sfLines[i].node.discountAllocations) || [];
@@ -363,20 +370,33 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Try Storefront API first; if unavailable fall back to proxy */
+      /* Validate: Storefront API first (returns the real saving for every discount
+         type), then the server proxy as a fallback. */
       var validation = await validateViaStorefrontAPI(upperCode);
       if (!validation) validation = await validateViaProxy(upperCode);
 
-      if (validation && !validation.valid) {
+      /* Couldn't verify the code at all (no storefront token AND proxy unreachable).
+         Don't fake an "applied" state for an unverified code — tell the customer. */
+      if (!validation) {
         discountCode    = "";
         appliedDiscount = null;
-        discountError   = validation.reason || "Invalid discount code or not applicable to your cart.";
+        discountError   = "Couldn't verify this code right now. Please try again.";
         discountLoading = false;
         if (isOpen) renderFooter();
         return;
       }
 
-      /* Set Shopify's session cookie so the code is pre-filled at checkout */
+      /* Shopify rejected it (expired, not applicable, or wrong items in cart). */
+      if (!validation.valid) {
+        discountCode    = "";
+        appliedDiscount = null;
+        discountError   = validation.reason || "This code isn't valid or doesn't apply to your cart.";
+        discountLoading = false;
+        if (isOpen) renderFooter();
+        return;
+      }
+
+      /* Valid — set Shopify's session cookie so the code carries to checkout */
       await applyDiscountSession(upperCode);
       cart = await loadCart();
 
