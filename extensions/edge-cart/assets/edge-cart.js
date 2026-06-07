@@ -167,11 +167,10 @@
     }).then(function (r) { return r.json(); });
   }
 
-  /* Code discounts are NOT reflected by Shopify's AJAX Cart API: /cart.js only
-     shows automatic/script discounts, never a manually-entered code (those apply
-     at checkout). So we size the code's value ourselves from the validated
-     discount data + current cart for the in-cart preview. The code is still
-     applied for real at checkout via ?discount=CODE. */
+  /* Once a code is applied via /cart/update.js (see applyDiscountSession), the
+     AJAX Cart API DOES reflect it: /cart.js populates discount_codes[] with
+     applicable:true/false and reduces total_price. We read those authoritative
+     values for the in-cart preview, and the code carries into checkout. */
   function gidToId(gid) {
     var m = String(gid || "").match(/(\d+)\s*$/);
     return m ? m[1] : "";
@@ -227,143 +226,29 @@
     return { ok: true };
   }
 
-  /* Loads /discount/CODE in a hidden iframe so Shopify sets its discount session
-     cookie — this makes the code carry into checkout. NOTE: /cart.js does NOT
-     reflect typed codes, so the in-cart preview amount comes from discountSavings()
-     and the code is applied for real at checkout (via ?discount=CODE). */
+  /* Applies a discount code to the cart via the AJAX Cart API's `discount`
+     parameter (Shopify added this to /cart/update.js in 2025). Shopify validates
+     the code server-side exactly like native checkout — expiry, eligibility,
+     minimum-spend/quantity, Buy X Get Y — and carries it into checkout. After
+     this resolves, /cart.js reflects discount_codes[].applicable and reduces
+     total_price, so the in-cart preview and validation are authoritative.
+     Pass "" to remove all codes from the cart. */
   function applyDiscountSession(code) {
-    return new Promise(function (resolve) {
-      var done = false, timer = null;
-      function finish() {
-        if (done) return;
-        done = true;
-        clearTimeout(timer);
-        if (frame && frame.parentNode) frame.parentNode.removeChild(frame);
-        setTimeout(resolve, 120); /* brief pause for cookie commit */
-      }
-      var frame = document.createElement("iframe");
-      frame.setAttribute("aria-hidden", "true");
-      frame.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;";
-      frame.onload  = finish;
-      frame.onerror = finish;
-      timer = setTimeout(finish, 5000);
-      document.body.appendChild(frame);
-      frame.src = "/discount/" + encodeURIComponent(code);
-    });
+    return fetch("/cart/update.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      credentials: "same-origin",
+      body: JSON.stringify({ discount: code }),
+    }).then(function (r) { return r.json(); }).catch(function () { return null; });
   }
 
-  /* Validate a discount code via the Shopify Storefront API.
-     Returns { valid: true, nativeAmount: <cents> } when applicable,
-     { valid: false } when Shopify explicitly rejects it,
-     or null when the token is unavailable (fall back to checkout-only). */
-  async function validateViaStorefrontAPI(code) {
-    if (!sfToken || !sfShop) return null;
-
-    var items = (cart && cart.items) || [];
-    if (!items.length) return null;
-
-    var lines = items.map(function (item) {
-      return {
-        merchandiseId: "gid://shopify/ProductVariant/" + item.variant_id,
-        quantity: item.quantity,
-      };
-    });
-
-    /* cost.totalDiscountAmount does NOT exist on CartCost in Shopify's Storefront API.
-       The correct source is per-line discountAllocations.discountedAmount. */
-    var mutation = "mutation cartCreate($input:CartInput!){cartCreate(input:$input){cart{discountCodes{code applicable}discountAllocations{discountedAmount{amount}}lines(first:250){edges{node{discountAllocations{discountedAmount{amount}}}}}}userErrors{message}}}";
-
-    try {
-      var res = await fetch("https://" + sfShop + "/api/2025-07/graphql.json", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Storefront-Access-Token": sfToken,
-        },
-        body: JSON.stringify({ query: mutation, variables: { input: { lines: lines, discountCodes: [code] } } }),
-      });
-      if (!res.ok) return null;
-      var data = await res.json();
-      var sfCart = data && data.data && data.data.cartCreate && data.data.cartCreate.cart;
-      if (!sfCart) return null;
-
-      var dc = (sfCart.discountCodes || []).find(function (d) {
-        return (d.code || "").toUpperCase() === code.toUpperCase();
-      });
-      if (!dc || !dc.applicable) return { valid: false };
-
-      /* Sum discount allocations to get the total saving. Order-level codes (e.g.
-         "5% off order") are allocated at the CART level; product-level codes at the
-         LINE level. With a single code only one level is populated, so summing both
-         is exact and never double-counts. */
-      var totalDiscount = 0;
-      var cartAllocs = sfCart.discountAllocations || [];
-      for (var k = 0; k < cartAllocs.length; k++) {
-        totalDiscount += parseFloat((cartAllocs[k].discountedAmount && cartAllocs[k].discountedAmount.amount) || "0");
-      }
-      var sfLines = (sfCart.lines && sfCart.lines.edges) || [];
-      for (var i = 0; i < sfLines.length; i++) {
-        var allocs = (sfLines[i].node && sfLines[i].node.discountAllocations) || [];
-        for (var j = 0; j < allocs.length; j++) {
-          totalDiscount += parseFloat((allocs[j].discountedAmount && allocs[j].discountedAmount.amount) || "0");
-        }
-      }
-      return { valid: true, nativeAmount: Math.round(totalDiscount * 100) };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /* Server-side fallback: call the app proxy validate-discount endpoint.
-     Works for any store regardless of whether a storefront token was generated.
-     Returns same shape as validateViaStorefrontAPI. */
-  async function validateViaProxy(code) {
-    try {
-      var url = PROXY + "/api/validate-discount?code=" + encodeURIComponent(code);
-      if (SHOP) url += "&shop=" + encodeURIComponent(SHOP);
-      var res = await fetch(url, { credentials: "same-origin" });
-      if (!res.ok) return null;
-      var data = await res.json();
-      if (!data.valid) {
-        var reason = data.reason || "";
-        /* Server/scope errors are not user errors — return null so the code
-           still goes through to checkout instead of showing a misleading message. */
-        if (/scope|reinstall|session|reload|try again/i.test(reason)) return null;
-        return { valid: false, reason: reason || "Invalid discount code." };
-      }
-
-      /* Compute savings in cents from the discount definition + current cart */
-      var cartTotal = (cart && cart.total_price) || 0;
-      var nativeAmount = 0;
-      if (data.type === "percentage") {
-        /* data.value is a fraction: 0.05 = 5% */
-        if (data.appliesToAll) {
-          nativeAmount = Math.round(cartTotal * (data.value || 0));
-        } else {
-          var items = (cart && cart.items) || [];
-          var eligible = 0;
-          for (var _i = 0; _i < items.length; _i++) {
-            if (lineEligibleForDiscount(items[_i], data)) eligible += items[_i].line_price;
-          }
-          nativeAmount = Math.round(eligible * (data.value || 0));
-        }
-      } else if (data.type === "fixed_amount") {
-        /* data.value is already in cents */
-        nativeAmount = Math.min(data.value || 0, cartTotal);
-      }
-      return { valid: true, nativeAmount: nativeAmount, type: data.type, appliesToAll: data.appliesToAll !== false, productIds: data.productIds || [], variantIds: data.variantIds || [], minimumRequirement: data.minimumRequirement || null };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /* Apply a discount code — Corner Cart approach:
-     1. Set Shopify session cookie via /discount/CODE (always succeeds, even for bad codes).
-     2. Reload /cart.js — Shopify populates discount_codes[] and reduces total_price for valid codes.
-     3. Use cart.discount_codes to confirm validity (no extra API call needed).
-     4. Savings = cart.original_total_price - cart.total_price (authoritative from Shopify).
-     Storefront API is used as a pre-check only when the sfToken is available, to get
-     a faster error message for obviously-invalid codes before touching the session. */
+  /* Apply a discount code.
+     Step 1 — hit /discount/CODE so Shopify sets its session cookie (same as visiting
+               the link in an email; works even for invalid codes — Shopify just ignores them).
+     Step 2 — reload /cart.js; Shopify now populates discount_codes[] with applicable:true
+               for every valid code, and reduces total_price accordingly.
+     Step 3 — read discount_codes[] to confirm validity; use original_total_price - total_price
+               as the authoritative saving. Zero server calls to our backend. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -377,31 +262,16 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Optional fast pre-check via Storefront API — gives an error message before
-         touching the session, but is skipped if sfToken is unavailable. */
-      if (sfToken && sfShop) {
-        var preCheck = await validateViaStorefrontAPI(upperCode);
-        if (preCheck && !preCheck.valid) {
-          discountCode    = "";
-          appliedDiscount = null;
-          discountError   = preCheck.reason || "Invalid discount code or not applicable to your cart.";
-          discountLoading = false;
-          if (isOpen) renderFooter();
-          return;
-        }
-      }
-
-      /* Apply session cookie + reload cart — this is the authoritative check */
+      /* Set Shopify session cookie then refresh cart */
       await applyDiscountSession(upperCode);
       cart = await loadCart();
 
-      /* Shopify puts the code in discount_codes[] with applicable:true only when valid */
+      /* Shopify sets applicable:true only for codes that are genuinely valid */
       var appliedInCart = (cart.discount_codes || []).some(function (dc) {
         return (dc.code || "").toUpperCase() === upperCode && dc.applicable;
       });
 
       if (!appliedInCart) {
-        /* Code was rejected by Shopify — show error */
         discountCode    = "";
         appliedDiscount = null;
         discountError   = "Invalid discount code or not applicable to your cart.";
@@ -410,7 +280,7 @@
         return;
       }
 
-      /* Discount amount comes directly from cart.js (original_total_price - total_price) */
+      /* Shopify already reduced total_price — difference is the saving */
       var cartDiscount = Math.max(0, (cart.original_total_price || 0) - (cart.total_price || 0));
 
       discountCode       = upperCode;
@@ -444,10 +314,9 @@
     }
   }
 
-  /* Remove the applied discount code from UI and state.
-     discountSavings() returns 0 when appliedDiscount is null, so the summary
-     correctly shows no savings even if a Shopify session cookie lingers.
-     The checkout URL loses ?discount=CODE, so checkout won't use the code. */
+  /* Remove the applied discount code from UI, state, AND the cart session.
+     Posting discount:"" to /cart/update.js clears all codes server-side, so the
+     code won't carry into checkout and total_price returns to full price. */
   async function clearDiscount() {
     discountCode       = "";
     appliedDiscount    = null;
@@ -456,6 +325,7 @@
     discountInputValue = "";
     if (isOpen) render();
     try {
+      await applyDiscountSession("");
       cart = await loadCart();
       if (isOpen) render();
     } catch (_) {}
