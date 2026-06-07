@@ -302,10 +302,48 @@
     }
   }
 
+  /* Server-side fallback: call the app proxy validate-discount endpoint.
+     Works for any store regardless of whether a storefront token was generated.
+     Returns same shape as validateViaStorefrontAPI. */
+  async function validateViaProxy(code) {
+    try {
+      var url = PROXY + "/api/validate-discount?code=" + encodeURIComponent(code);
+      if (SHOP) url += "&shop=" + encodeURIComponent(SHOP);
+      var res = await fetch(url, { credentials: "same-origin" });
+      if (!res.ok) return null;
+      var data = await res.json();
+      if (!data.valid) return { valid: false, reason: data.reason || "Invalid discount code." };
+
+      /* Compute savings in cents from the discount definition + current cart */
+      var cartTotal = (cart && cart.total_price) || 0;
+      var nativeAmount = 0;
+      if (data.type === "percentage") {
+        /* data.value is a fraction: 0.05 = 5% */
+        if (data.appliesToAll) {
+          nativeAmount = Math.round(cartTotal * (data.value || 0));
+        } else {
+          var items = (cart && cart.items) || [];
+          var eligible = 0;
+          for (var _i = 0; _i < items.length; _i++) {
+            if (lineEligibleForDiscount(items[_i], data)) eligible += items[_i].line_price;
+          }
+          nativeAmount = Math.round(eligible * (data.value || 0));
+        }
+      } else if (data.type === "fixed_amount") {
+        /* data.value is already in cents */
+        nativeAmount = Math.min(data.value || 0, cartTotal);
+      }
+      return { valid: true, nativeAmount: nativeAmount, type: data.type, appliesToAll: data.appliesToAll !== false, productIds: data.productIds || [], variantIds: data.variantIds || [], minimumRequirement: data.minimumRequirement || null };
+    } catch (_) {
+      return null;
+    }
+  }
+
   /* Apply a discount code:
-     1. Validate via Storefront API to get real savings + reject invalid codes.
-     2. Set Shopify's session cookie via /discount/CODE so the code carries to checkout.
-     3. Store result so discountSavings() reflects the correct deduction in the UI. */
+     1. Try Storefront API (fast, client-side) — needs sfToken to be set.
+     2. Fall back to server-side proxy validation if sfToken not available.
+     3. Set Shopify's session cookie via /discount/CODE so code carries to checkout.
+     4. Store nativeAmount so discountSavings() shows the real deduction in the cart. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -319,12 +357,14 @@
     if (isOpen) renderFooter();
 
     try {
+      /* Try Storefront API first; if unavailable fall back to proxy */
       var validation = await validateViaStorefrontAPI(upperCode);
+      if (!validation) validation = await validateViaProxy(upperCode);
 
       if (validation && !validation.valid) {
         discountCode    = "";
         appliedDiscount = null;
-        discountError   = "Invalid discount code or not applicable to your cart.";
+        discountError   = validation.reason || "Invalid discount code or not applicable to your cart.";
         discountLoading = false;
         if (isOpen) renderFooter();
         return;
@@ -341,7 +381,10 @@
         valid: true,
         type: nativeAmount > 0 ? "fixed_amount" : "checkout-only",
         nativeAmount: nativeAmount,
-        appliesToAll: true,
+        appliesToAll: validation ? validation.appliesToAll !== false : true,
+        productIds: (validation && validation.productIds) || [],
+        variantIds: (validation && validation.variantIds) || [],
+        minimumRequirement: (validation && validation.minimumRequirement) || null,
         code: upperCode,
       };
       discountError      = "";
