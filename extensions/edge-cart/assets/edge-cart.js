@@ -54,6 +54,7 @@
   var inventoryFetching    = {};   /* keyed by handle — prevents duplicate in-flight fetches */
   var cartShareToastTimer  = null;
   var orderSummaryOpen     = false;
+  var couponsOpen          = false;   /* "View all coupons" panel expanded? */
   var announcementIndex    = 0;
   var announcementTimer    = null;
 
@@ -147,11 +148,24 @@
   }
 
   function cartChange(key, quantity) {
+    /* Prefer the 1-based line number over the line key: when a discount code is
+       applied Shopify re-keys discounted line items, so a key captured before the
+       discount no longer matches and /cart/change.js silently rejects the change
+       (this is why removing a discounted product "didn't work"). The line index
+       is stable regardless of discounts. Falls back to the key if not found. */
+    var body = { quantity: quantity };
+    var idx = -1;
+    if (cart && cart.items) {
+      for (var i = 0; i < cart.items.length; i++) {
+        if (cart.items[i].key === key) { idx = i + 1; break; }
+      }
+    }
+    if (idx > 0) body.line = idx; else body.id = key;
     return fetch("/cart/change.js", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
       credentials: "same-origin",
-      body: JSON.stringify({ id: key, quantity: quantity }),
+      body: JSON.stringify(body),
     }).then(function (r) {
       if (!r.ok) return r.json().then(function (e) { throw new Error(e.description || "Change failed"); });
       return r.json().then(function (c) { cart = c; document.dispatchEvent(new CustomEvent('cart:updated')); });
@@ -796,6 +810,51 @@
     ].join("");
   }
 
+  /* Active, valid merchant-configured coupons (skips blanks/disabled). */
+  function enabledCoupons() {
+    return ((settings && settings.configuredDiscounts) || []).filter(function (c) {
+      return c && c.enabled !== false && (c.code || "").trim();
+    });
+  }
+
+  /* "View all coupons" trigger + expandable list of coupon cards (screenshot UI).
+     Codes come from app settings; tapping Apply runs the same validated flow as
+     the discount field, so eligibility is enforced by Shopify. */
+  function buildCouponsHTML() {
+    if (!settings.offersEnabled) return "";
+    var list = enabledCoupons();
+    if (!list.length) return "";
+
+    var cards = list.map(function (c) {
+      var code = (c.code || "").toUpperCase();
+      var isActive = !!discountCode && code === discountCode;
+      return [
+        '<div class="ec-coupon' + (isActive ? ' ec-coupon--active' : '') + '">',
+          '<div class="ec-coupon__info">',
+            '<span class="ec-coupon__code">🏷 ' + esc(code) + '</span>',
+            c.description ? '<span class="ec-coupon__desc">' + esc(c.description) + '</span>' : '',
+          '</div>',
+          isActive
+            ? '<span class="ec-coupon__applied">✓ Applied</span>'
+            : '<button class="ec-coupon__apply" data-action="apply-coupon" data-code="' + esc(code) + '">Apply</button>',
+        '</div>',
+      ].join("");
+    }).join("");
+
+    return [
+      '<button class="ec-coupons__trigger" data-action="toggle-coupons" aria-expanded="' + (couponsOpen ? "true" : "false") + '">',
+        '<span class="ec-coupons__trigger-label">🎟 View All Offers</span>',
+        '<span class="ec-coupons__trigger-side">',
+          '<span class="ec-coupons__count">' + list.length + '</span>',
+          '<svg class="ec-coupons__chevron" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        '</span>',
+      '</button>',
+      '<div class="ec-coupons' + (couponsOpen ? ' ec-coupons--open' : '') + '">',
+        '<div class="ec-coupons__list">', cards, '</div>',
+      '</div>',
+    ].join("");
+  }
+
   function renderFooter() {
     var footer = id("ec-footer");
     var checkoutBar = id("ec-checkout-bar");
@@ -848,13 +907,12 @@
       } else {
         html += [
           '<div class="ec-discount">',
-            '<label class="ec-discount__label" for="ec-disc-input">Discount code</label>',
             '<div class="ec-discount__wrap">',
               '<input class="ec-discount__input" id="ec-disc-input" type="text" ',
-                'placeholder="Enter code" ',
+                'placeholder="Enter coupon code" ',
                 'value="' + esc(discountInputValue) + '" ',
                 'autocomplete="off" spellcheck="false" ',
-                'aria-label="Discount code"' + (discountLoading ? ' disabled' : '') + '>',
+                'aria-label="Coupon code"' + (discountLoading ? ' disabled' : '') + '>',
               '<button class="ec-discount__apply" id="ec-disc-apply"' + (discountLoading || !discountInputValue.trim() ? ' disabled' : '') + '>',
                 discountLoading ? 'Applying…' : 'Apply',
               '</button>',
@@ -867,6 +925,9 @@
           '</div>',
         ].join("");
       }
+
+      /* "View all coupons" — merchant-configured code list (screenshot UI) */
+      html += buildCouponsHTML();
     }
 
     /* Order Notes */
@@ -2766,6 +2827,29 @@
     var discRemoveBtn = e.target.closest("[data-action='discount-remove']");
     if (discRemoveBtn) { clearDiscount(); return; }
 
+    var couponToggle = e.target.closest("[data-action='toggle-coupons']");
+    if (couponToggle) { couponsOpen = !couponsOpen; renderFooter(); return; }
+
+    var couponApply = e.target.closest("[data-action='apply-coupon']");
+    if (couponApply) {
+      var cpnCode = couponApply.dataset.code;
+      if (cpnCode) { couponsOpen = false; applyDiscount(cpnCode); }
+      return;
+    }
+
+  }
+
+  /* True if the currently-applied code is still valid for the cart as it stands.
+     After a cart change (e.g. removing the one product a code applied to), Shopify
+     keeps the code in discount_codes but flips applicable:false — we use that to
+     auto-remove a code that no longer applies. */
+  function discountStillApplicable() {
+    if (!discountCode) return true;
+    var codes = (cart && cart.discount_codes) || [];
+    for (var i = 0; i < codes.length; i++) {
+      if ((codes[i].code || "").toUpperCase() === discountCode && codes[i].applicable) return true;
+    }
+    return false;
   }
 
   function doCartChange(key, qty) {
@@ -2775,6 +2859,13 @@
       .then(function () {
         delete updatingKeys[key];
         aiSeedProductId = null; /* invalidate AI cache — cart composition changed */
+        /* If the cart change made an applied code invalid (e.g. its eligible
+           product was removed), auto-remove the code so it doesn't linger. */
+        if (discountCode && !discountStillApplicable()) {
+          var removed = discountCode;
+          clearDiscount();
+          showToast('Discount "' + removed + '" removed — no longer applies to your cart', 4000, false);
+        }
         render();
         syncFreebie();
         fetchAiRecommendations();
