@@ -264,7 +264,9 @@
       };
     });
 
-    var mutation = "mutation cartCreate($input:CartInput!){cartCreate(input:$input){cart{discountCodes{code applicable}cost{totalDiscountAmount{amount}}}userErrors{message}}}";
+    /* cost.totalDiscountAmount does NOT exist on CartCost in Shopify's Storefront API.
+       The correct source is per-line discountAllocations.discountedAmount. */
+    var mutation = "mutation cartCreate($input:CartInput!){cartCreate(input:$input){cart{discountCodes{code applicable}lines(first:250){edges{node{discountAllocations{discountedAmount{amount}}}}}}userErrors{message}}}";
 
     try {
       var res = await fetch("https://" + sfShop + "/api/2025-07/graphql.json", {
@@ -285,8 +287,16 @@
       });
       if (!dc || !dc.applicable) return { valid: false };
 
-      var discountDollars = parseFloat((sfCart.cost && sfCart.cost.totalDiscountAmount && sfCart.cost.totalDiscountAmount.amount) || "0");
-      return { valid: true, nativeAmount: Math.round(discountDollars * 100) };
+      /* Sum discount allocations across all line items to get the total saving */
+      var totalDiscount = 0;
+      var sfLines = (sfCart.lines && sfCart.lines.edges) || [];
+      for (var i = 0; i < sfLines.length; i++) {
+        var allocs = (sfLines[i].node && sfLines[i].node.discountAllocations) || [];
+        for (var j = 0; j < allocs.length; j++) {
+          totalDiscount += parseFloat((allocs[j].discountedAmount && allocs[j].discountedAmount.amount) || "0");
+        }
+      }
+      return { valid: true, nativeAmount: Math.round(totalDiscount * 100) };
     } catch (_) {
       return null;
     }
