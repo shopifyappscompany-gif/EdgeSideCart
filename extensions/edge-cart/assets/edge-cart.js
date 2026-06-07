@@ -190,18 +190,32 @@
        we don't size them here — Shopify applies the real amount at checkout. */
     return false;
   }
-  /* Savings in cents for the applied code discount.
-     Uses Shopify's own total_allocated_amount from cart.discount_applications
-     so the number is always correct — no manual computation needed. */
+  /* Savings (cents) attributable to the manually-entered CODE only, read from
+     Shopify's own per-line allocations (type "discount_code"). Isolating the code
+     from any automatic/script discounts is what stops the order summary from
+     double-counting (auto discounts are already inside original−total_price). */
+  function lineCodeSavings(line) {
+    var allocs = (line && line.line_level_discount_allocations) || [];
+    var sum = 0;
+    for (var j = 0; j < allocs.length; j++) {
+      var da = allocs[j].discount_application || {};
+      if ((da.type || "") === "discount_code") sum += allocs[j].amount || 0;
+    }
+    return sum;
+  }
+  function codeAllocatedSavings() {
+    if (!cart) return 0;
+    var items = cart.items || [];
+    var sum = 0;
+    for (var i = 0; i < items.length; i++) sum += lineCodeSavings(items[i]);
+    return sum;
+  }
+  /* Savings in cents for the applied code discount (the code's own portion). */
   function discountSavings() {
     if (!cart || !appliedDiscount) return 0;
-    /* Prefer cart.js data — after applyDiscountSession, Shopify reduces total_price
-       and puts the code in discount_codes, so original_total_price - total_price
-       is the authoritative amount (same approach as Corner Cart). */
-    var cartDiff = (cart.original_total_price || 0) - (cart.total_price || 0);
-    if (cartDiff > 0) return cartDiff;
-    var d = appliedDiscount;
-    if (d.nativeAmount > 0) return d.nativeAmount;
+    var coded = codeAllocatedSavings();
+    if (coded > 0) return coded;
+    if (appliedDiscount.nativeAmount > 0) return appliedDiscount.nativeAmount;
     return 0;
   }
   /* Is a valid code actually usable on THIS cart? Mirrors what native checkout
@@ -262,9 +276,10 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Set Shopify session cookie then refresh cart */
-      await applyDiscountSession(upperCode);
-      cart = await loadCart();
+      /* Apply the code to the cart; /cart/update.js returns the updated cart so
+         we use it directly (no extra /cart.js round-trip = faster apply). */
+      var updated = await applyDiscountSession(upperCode);
+      cart = (updated && updated.items) ? updated : await loadCart();
 
       /* Shopify sets applicable:true only for codes that are genuinely valid */
       var appliedInCart = (cart.discount_codes || []).some(function (dc) {
@@ -280,8 +295,9 @@
         return;
       }
 
-      /* Shopify already reduced total_price — difference is the saving */
-      var cartDiscount = Math.max(0, (cart.original_total_price || 0) - (cart.total_price || 0));
+      /* The code's own saving comes from its per-line allocations (excludes any
+         automatic discounts), so previews never double-count. */
+      var cartDiscount = codeAllocatedSavings();
 
       discountCode       = upperCode;
       appliedDiscount    = {
@@ -316,17 +332,35 @@
 
   /* Remove the applied discount code from UI, state, AND the cart session.
      Posting discount:"" to /cart/update.js clears all codes server-side, so the
-     code won't carry into checkout and total_price returns to full price. */
+     code won't carry into checkout and total_price returns to full price.
+     To avoid the 1–2s lag while Shopify responds, we optimistically restore the
+     totals in-memory and re-render immediately, then reconcile with the real
+     cart that /cart/update.js returns. */
   async function clearDiscount() {
+    var removed = codeAllocatedSavings(); /* code's current saving, before removal */
     discountCode       = "";
     appliedDiscount    = null;
     discountError      = "";
     discountSuccess    = false;
     discountInputValue = "";
+
+    /* Optimistic restore: add the code's saving back and strip its allocations so
+       the total, per-line badges and order summary all update instantly. */
+    if (cart && removed > 0) {
+      cart.total_price    = (cart.total_price || 0) + removed;
+      cart.total_discount = Math.max(0, (cart.total_discount || 0) - removed);
+      (cart.items || []).forEach(function (it) {
+        it.line_level_discount_allocations = ((it.line_level_discount_allocations) || []).filter(function (a) {
+          return ((a.discount_application || {}).type || "") !== "discount_code";
+        });
+      });
+    }
     if (isOpen) render();
+
     try {
-      await applyDiscountSession("");
-      cart = await loadCart();
+      /* /cart/update.js returns the authoritative cart — use it directly. */
+      var updated = await applyDiscountSession("");
+      cart = (updated && updated.items) ? updated : await loadCart();
       if (isOpen) render();
     } catch (_) {}
   }
@@ -692,6 +726,7 @@
       ? item.featured_image.url
       : (item.image || (freebie ? (freebieOffer.productImageUrl || "") : ""));
     var hasDisc = item.line_price < item.original_line_price;
+    var lineSave = freebie ? 0 : lineCodeSavings(item); /* code discount on THIS line */
     var isUpd   = updatingKeys[item.key];
     var isFreebieLoading = freebie && freebieOffer && freebieAutoSync[freebieOffer.id];
     var showVar = settings.showVariantTitle !== false;
@@ -753,6 +788,9 @@
                 ].join(""),
             '</div>',
           '</div>',
+          lineSave > 0
+            ? '<div class="ec-item__disc"><span class="ec-item__disc-tag">🏷 ' + esc(discountCode || "Discount") + '</span><span class="ec-item__disc-amt">−' + money(lineSave) + '</span></div>'
+            : "",
         '</div>',
       '</div>',
     ].join("");
@@ -768,16 +806,9 @@
     }
 
     /* Use Shopify's own numbers from /cart.js — nothing is calculated here.
-       total_price is post-discount; original_total_price is pre-discount. */
-    var savings    = discountSavings();
-    var subtotal   = savings > 0 ? cart.original_total_price : cart.total_price;
-    /* If cart.js already reflected the typed code discount (original > total),
-       finalTotal IS total_price — don't subtract again (Corner Cart approach).
-       Only subtract nativeAmount when cart.js hasn't applied it yet. */
-    var cartAlreadyDiscounted = (cart.original_total_price || 0) > (cart.total_price || 0);
-    var finalTotal = cartAlreadyDiscounted
-      ? cart.total_price
-      : Math.max(0, cart.total_price - savings);
+       total_price is post-discount (all discounts, incl. our code); original is pre. */
+    var savings    = discountSavings();           /* code portion, for the field label */
+    var finalTotal = cart.total_price;            /* Shopify's authoritative payable */
     var html = "";
 
     /* Freebie — skip when shown at top of body */
@@ -866,10 +897,13 @@
 
       /* Order Summary — placed directly above the checkout button */
       if (settings.orderSummaryEnabled !== false) {
-        /* Automatic (line/script) discount = what /cart.js already took off. The
-           code saving is separate (not in total_price), so don't subtract it here. */
-        var autoDisc2   = cart.original_total_price - cart.total_price;
-        var totalSaved2 = (autoDisc2 > 0 ? autoDisc2 : 0) + savings;
+        /* /cart.js total_price already reflects EVERYTHING (automatic + our code).
+           Split the total discount into the code's portion vs. automatic so each
+           shows on its own line and the "Total savings" never double-counts. */
+        var codeDisc2   = codeAllocatedSavings();
+        var totalSaved2 = Math.max(0, cart.original_total_price - cart.total_price);
+        var autoDisc2   = Math.max(0, totalSaved2 - codeDisc2);
+        var subtotal2   = cart.original_total_price - autoDisc2; /* after auto, before code */
         var savingsPct2 = cart.original_total_price > 0
           ? Math.round((totalSaved2 / cart.original_total_price) * 100) : 0;
 
@@ -877,9 +911,9 @@
           autoDisc2 > 0 ? [
             '<div class="ec-os__row"><span class="ec-os__row-label">MRP total</span><span class="ec-os__row-price">' + money(cart.original_total_price) + '</span></div>',
             '<div class="ec-os__row"><span class="ec-os__row-label">Discount on MRP</span><span class="ec-os__row-green">−' + money(autoDisc2) + '</span></div>',
-            '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
-          ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(cart.total_price) + '</span></div>',
-          savings > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(savings) + '</span></div>' : "",
+            '<div class="ec-os__row"><span class="ec-os__row-label">Cart Subtotal</span><span class="ec-os__row-price">' + money(subtotal2) + '</span></div>',
+          ].join("") : '<div class="ec-os__row"><span class="ec-os__row-label">Subtotal</span><span class="ec-os__row-price">' + money(subtotal2) + '</span></div>',
+          codeDisc2 > 0 ? '<div class="ec-os__row"><span class="ec-os__row-label">Discount' + (discountCode ? ' (' + esc(discountCode) + ')' : '') + '</span><span class="ec-os__row-green">−' + money(codeDisc2) + '</span></div>' : "",
           '<div class="ec-os__row"><span class="ec-os__row-label">Shipping</span><span class="ec-os__row-free">FREE</span></div>',
           totalSaved2 > 0 ? '<div class="ec-os__row ec-os__row--savings"><span class="ec-os__row-label">Total savings</span><span class="ec-os__row-green ec-os__row-green--bold">' + money(totalSaved2) + '</span></div>' : "",
           '<div class="ec-os__divider"></div>',
