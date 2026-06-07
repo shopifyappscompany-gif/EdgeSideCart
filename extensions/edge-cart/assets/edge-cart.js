@@ -196,6 +196,11 @@
      so the number is always correct — no manual computation needed. */
   function discountSavings() {
     if (!cart || !appliedDiscount) return 0;
+    /* Prefer cart.js data — after applyDiscountSession, Shopify reduces total_price
+       and puts the code in discount_codes, so original_total_price - total_price
+       is the authoritative amount (same approach as Corner Cart). */
+    var cartDiff = (cart.original_total_price || 0) - (cart.total_price || 0);
+    if (cartDiff > 0) return cartDiff;
     var d = appliedDiscount;
     if (d.nativeAmount > 0) return d.nativeAmount;
     return 0;
@@ -352,11 +357,13 @@
     }
   }
 
-  /* Apply a discount code:
-     1. Try Storefront API (fast, client-side) — needs sfToken to be set.
-     2. Fall back to server-side proxy validation if sfToken not available.
-     3. Set Shopify's session cookie via /discount/CODE so code carries to checkout.
-     4. Store nativeAmount so discountSavings() shows the real deduction in the cart. */
+  /* Apply a discount code — Corner Cart approach:
+     1. Set Shopify session cookie via /discount/CODE (always succeeds, even for bad codes).
+     2. Reload /cart.js — Shopify populates discount_codes[] and reduces total_price for valid codes.
+     3. Use cart.discount_codes to confirm validity (no extra API call needed).
+     4. Savings = cart.original_total_price - cart.total_price (authoritative from Shopify).
+     Storefront API is used as a pre-check only when the sfToken is available, to get
+     a faster error message for obviously-invalid codes before touching the session. */
   async function applyDiscount(code) {
     code = (code || "").trim();
     if (!code) { clearDiscount(); return; }
@@ -370,47 +377,51 @@
     if (isOpen) renderFooter();
 
     try {
-      /* Validate: Storefront API first (returns the real saving for every discount
-         type), then the server proxy as a fallback. */
-      var validation = await validateViaStorefrontAPI(upperCode);
-      if (!validation) validation = await validateViaProxy(upperCode);
-
-      /* Couldn't verify the code at all (no storefront token AND proxy unreachable).
-         Don't fake an "applied" state for an unverified code — tell the customer. */
-      if (!validation) {
-        discountCode    = "";
-        appliedDiscount = null;
-        discountError   = "Couldn't verify this code right now. Please try again.";
-        discountLoading = false;
-        if (isOpen) renderFooter();
-        return;
+      /* Optional fast pre-check via Storefront API — gives an error message before
+         touching the session, but is skipped if sfToken is unavailable. */
+      if (sfToken && sfShop) {
+        var preCheck = await validateViaStorefrontAPI(upperCode);
+        if (preCheck && !preCheck.valid) {
+          discountCode    = "";
+          appliedDiscount = null;
+          discountError   = preCheck.reason || "Invalid discount code or not applicable to your cart.";
+          discountLoading = false;
+          if (isOpen) renderFooter();
+          return;
+        }
       }
 
-      /* Shopify rejected it (expired, not applicable, or wrong items in cart). */
-      if (!validation.valid) {
-        discountCode    = "";
-        appliedDiscount = null;
-        discountError   = validation.reason || "This code isn't valid or doesn't apply to your cart.";
-        discountLoading = false;
-        if (isOpen) renderFooter();
-        return;
-      }
-
-      /* Valid — set Shopify's session cookie so the code carries to checkout */
+      /* Apply session cookie + reload cart — this is the authoritative check */
       await applyDiscountSession(upperCode);
       cart = await loadCart();
 
-      var nativeAmount = (validation && validation.nativeAmount > 0) ? validation.nativeAmount : 0;
+      /* Shopify puts the code in discount_codes[] with applicable:true only when valid */
+      var appliedInCart = (cart.discount_codes || []).some(function (dc) {
+        return (dc.code || "").toUpperCase() === upperCode && dc.applicable;
+      });
+
+      if (!appliedInCart) {
+        /* Code was rejected by Shopify — show error */
+        discountCode    = "";
+        appliedDiscount = null;
+        discountError   = "Invalid discount code or not applicable to your cart.";
+        discountLoading = false;
+        if (isOpen) renderFooter();
+        return;
+      }
+
+      /* Discount amount comes directly from cart.js (original_total_price - total_price) */
+      var cartDiscount = Math.max(0, (cart.original_total_price || 0) - (cart.total_price || 0));
 
       discountCode       = upperCode;
       appliedDiscount    = {
         valid: true,
-        type: nativeAmount > 0 ? "fixed_amount" : "checkout-only",
-        nativeAmount: nativeAmount,
-        appliesToAll: validation ? validation.appliesToAll !== false : true,
-        productIds: (validation && validation.productIds) || [],
-        variantIds: (validation && validation.variantIds) || [],
-        minimumRequirement: (validation && validation.minimumRequirement) || null,
+        type: cartDiscount > 0 ? "fixed_amount" : "checkout-only",
+        nativeAmount: cartDiscount,
+        appliesToAll: true,
+        productIds: [],
+        variantIds: [],
+        minimumRequirement: null,
         code: upperCode,
       };
       discountError      = "";
@@ -890,9 +901,13 @@
        total_price is post-discount; original_total_price is pre-discount. */
     var savings    = discountSavings();
     var subtotal   = savings > 0 ? cart.original_total_price : cart.total_price;
-    /* total_price is the AJAX-cart total (incl. automatic discounts but NOT the
-       typed code); subtract the computed code saving for the displayed total. */
-    var finalTotal = Math.max(0, cart.total_price - savings);
+    /* If cart.js already reflected the typed code discount (original > total),
+       finalTotal IS total_price — don't subtract again (Corner Cart approach).
+       Only subtract nativeAmount when cart.js hasn't applied it yet. */
+    var cartAlreadyDiscounted = (cart.original_total_price || 0) > (cart.total_price || 0);
+    var finalTotal = cartAlreadyDiscounted
+      ? cart.total_price
+      : Math.max(0, cart.total_price - savings);
     var html = "";
 
     /* Freebie — skip when shown at top of body */
