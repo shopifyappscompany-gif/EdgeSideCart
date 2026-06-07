@@ -745,8 +745,8 @@
     /* AI upsell (Shopify Recommendations API) */
     if (settings.aiUpsellEnabled) html += buildAiUpsellHTML();
 
-    /* Discount — hidden */
-    if (false && settings.discountEnabled) {
+    /* Discount field — shown only when merchant enables it in app settings */
+    if (settings.discountEnabled) {
       var isApplied = !!(appliedDiscount && discountCode);
       if (isApplied) {
         var labelText = savings > 0
