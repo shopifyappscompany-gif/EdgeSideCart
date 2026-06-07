@@ -314,6 +314,20 @@ export default function GeneralSettings() {
     );
   }
 
+  // ── Banner condition product/collection pickers ──────────
+  async function pickAnnouncementProducts(idx) {
+    const selected = await shopify.resourcePicker({ type: "product", multiple: 10 });
+    if (!selected) return;
+    const ids = selected.map(p => ({ id: p.id, title: p.title }));
+    setAnnouncements(prev => prev.map((a, i) => i === idx ? { ...a, productIds: ids } : a));
+  }
+  async function pickAnnouncementCollections(idx) {
+    const selected = await shopify.resourcePicker({ type: "collection", multiple: 10 });
+    if (!selected) return;
+    const cols = selected.map(c => ({ id: c.id, handle: c.handle, title: c.title }));
+    setAnnouncements(prev => prev.map((a, i) => i === idx ? { ...a, collectionIds: cols } : a));
+  }
+
   // ── Tier helpers ─────────────────────────────────────────
   function addTier() {
     setTieredRewards([...tieredRewards, {
@@ -496,8 +510,8 @@ export default function GeneralSettings() {
             <>
               <div>
                 <label style={labelStyle}>Rotation Interval (seconds)</label>
-                <input type="number" value={announcementInterval} min="2" max="30"
-                  onChange={e => setAnnouncementInterval(Math.max(2, parseInt(e.target.value) || 4))}
+                <input type="number" value={announcementInterval} min="1" max="30"
+                  onChange={e => setAnnouncementInterval(Math.max(1, parseInt(e.target.value) || 4))}
                   style={{ ...inputStyle, width: 100 }} />
                 <p style={helpText}>How long each message shows before switching to the next one.</p>
               </div>
@@ -529,6 +543,49 @@ export default function GeneralSettings() {
                       <label style={labelStyle}>Text Color</label>
                       <ColorPicker value={ann.textColor || "#ffffff"} onChange={v => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, textColor: v } : a))} small />
                     </div>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <label style={labelStyle}>Show this banner when</label>
+                    <select value={ann.conditionType || "always"} style={inputStyle}
+                      onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, conditionType: e.target.value } : a))}>
+                      <option value="always">Always</option>
+                      <option value="cartValue">Cart value is at least…</option>
+                      <option value="quantity">Cart quantity is at least…</option>
+                      <option value="product">Cart contains specific product(s)</option>
+                      <option value="collection">Cart contains product from collection(s)</option>
+                    </select>
+                    {ann.conditionType === "cartValue" && (
+                      <input type="number" min="0" value={ann.minCartValue ?? ""} style={{ ...inputStyle, marginTop: 8 }}
+                        placeholder="Minimum cart value (e.g. 50)"
+                        onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, minCartValue: e.target.value } : a))} />
+                    )}
+                    {ann.conditionType === "quantity" && (
+                      <input type="number" min="0" value={ann.minQuantity ?? ""} style={{ ...inputStyle, marginTop: 8 }}
+                        placeholder="Minimum quantity (e.g. 2)"
+                        onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, minQuantity: e.target.value } : a))} />
+                    )}
+                    {ann.conditionType === "product" && (
+                      <div style={{ marginTop: 8 }}>
+                        <button onClick={() => pickAnnouncementProducts(idx)}
+                          style={{ padding: "8px 14px", border: "1.5px solid #d0d0d0", borderRadius: 8, background: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                          Select products{(ann.productIds || []).length ? ` (${ann.productIds.length})` : ""}
+                        </button>
+                        {(ann.productIds || []).length > 0 && (
+                          <p style={helpText}>{ann.productIds.map(p => p.title).join(", ")}</p>
+                        )}
+                      </div>
+                    )}
+                    {ann.conditionType === "collection" && (
+                      <div style={{ marginTop: 8 }}>
+                        <button onClick={() => pickAnnouncementCollections(idx)}
+                          style={{ padding: "8px 14px", border: "1.5px solid #d0d0d0", borderRadius: 8, background: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                          Select collections{(ann.collectionIds || []).length ? ` (${ann.collectionIds.length})` : ""}
+                        </button>
+                        {(ann.collectionIds || []).length > 0 && (
+                          <p style={helpText}>{ann.collectionIds.map(c => c.title).join(", ")}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
