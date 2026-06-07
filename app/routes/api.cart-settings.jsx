@@ -1,6 +1,10 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
+/* In-memory Storefront token cache — persists for the life of the server process.
+   Avoids an extra REST round-trip on every cart-settings call once token is known. */
+const _sfTokenCache = new Map();
+
 const DEFAULT_SETTINGS = {
   enabled: true,
   headerText: "Your Cart",
@@ -188,29 +192,25 @@ export const loader = async ({ request }) => {
       });
     }
 
-    // Ensure we have a Storefront access token for client-side discount validation.
-    // appProxy session may not expose accessToken, so fetch the offline session directly.
-    let storefrontToken = settings.storefrontToken;
+    // Get a Storefront API token for client-side discount validation.
+    // Cached in memory so we only hit the REST API once per server restart per shop.
+    let storefrontToken = _sfTokenCache.get(shop) || null;
     if (!storefrontToken) {
       try {
         const offlineSession = await prisma.session.findFirst({
           where: { shop, isOnline: false },
           select: { accessToken: true },
         });
-        const accessToken = offlineSession?.accessToken || session?.accessToken;
-        console.log(`[EdgeCart] generating storefront token for ${shop}, hasToken=${!!accessToken}`);
+        const accessToken = offlineSession?.accessToken;
         if (accessToken) {
           storefrontToken = await getOrCreateStorefrontToken(shop, accessToken);
           if (storefrontToken) {
-            await prisma.cartSettings.update({
-              where: { shop },
-              data: { storefrontToken },
-            });
-            console.log(`[EdgeCart] storefront token saved for ${shop}`);
+            _sfTokenCache.set(shop, storefrontToken);
+            console.log(`[EdgeCart] storefront token cached for ${shop}`);
           }
         }
       } catch (err) {
-        console.error(`[EdgeCart] storefront token generation failed for ${shop}:`, err.message);
+        console.error(`[EdgeCart] storefront token error for ${shop}:`, err.message);
       }
     }
 

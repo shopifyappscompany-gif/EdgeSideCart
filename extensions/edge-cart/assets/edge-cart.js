@@ -312,7 +312,13 @@
       var res = await fetch(url, { credentials: "same-origin" });
       if (!res.ok) return null;
       var data = await res.json();
-      if (!data.valid) return { valid: false, reason: data.reason || "Invalid discount code." };
+      if (!data.valid) {
+        var reason = data.reason || "";
+        /* Server/scope errors are not user errors — return null so the code
+           still goes through to checkout instead of showing a misleading message. */
+        if (/scope|reinstall|session|reload|try again/i.test(reason)) return null;
+        return { valid: false, reason: reason || "Invalid discount code." };
+      }
 
       /* Compute savings in cents from the discount definition + current cart */
       var cartTotal = (cart && cart.total_price) || 0;
