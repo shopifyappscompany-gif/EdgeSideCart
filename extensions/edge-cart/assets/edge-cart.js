@@ -849,7 +849,7 @@
     }
 
     return [
-      '<div class="ec-item' + (isFreebieLoading ? " ec-item--syncing" : "") + (freebie ? " ec-item--freebie" : "") + '" data-key="' + esc(item.key) + '">',
+      '<div class="ec-item' + (isFreebieLoading ? " ec-item--syncing" : "") + (freebie ? " ec-item--freebie" : "") + (isUpd ? " ec-item--updating" : "") + '" data-key="' + esc(item.key) + '">',
         '<div class="ec-item__img">',
           img
             ? '<img src="' + esc(img) + '" alt="' + esc(item.product_title) + '" loading="lazy">'
@@ -2357,8 +2357,10 @@
         '<p class="ec-upsell-wrap__heading">' + esc(settings.upsellTitle || "You might also like") + '</p>',
         '<div class="ec-upsell-scroller">',
           '<div class="ec-upsell-track">' + cards + '</div>',
-          '<button class="ec-upsell-nav ec-upsell-nav--left" data-action="upsell-scroll" data-dir="-1" aria-label="Scroll left">‹</button>',
-          '<button class="ec-upsell-nav ec-upsell-nav--right" data-action="upsell-scroll" data-dir="1" aria-label="Scroll right">›</button>',
+          (settings.upsellSliderEnabled !== false
+            ? '<button class="ec-upsell-nav ec-upsell-nav--left" data-action="upsell-scroll" data-dir="-1" aria-label="Scroll left">‹</button>' +
+              '<button class="ec-upsell-nav ec-upsell-nav--right" data-action="upsell-scroll" data-dir="1" aria-label="Scroll right">›</button>'
+            : ''),
         '</div>',
       '</div>',
     ].join("");
@@ -2948,8 +2950,8 @@
     var upsellScroll = e.target.closest("[data-action='upsell-scroll']");
     if (upsellScroll) {
       var scroller = upsellScroll.closest(".ec-upsell-scroller");
-      var track = scroller && scroller.querySelector(".ec-upsell-track");
-      if (track) track.scrollBy({ left: (parseInt(upsellScroll.dataset.dir, 10) || 1) * Math.round(track.clientWidth * 0.8), behavior: "smooth" });
+      var trackEl = scroller && scroller.querySelector(".ec-upsell-track");
+      if (trackEl) trackEl.scrollBy({ left: (parseInt(upsellScroll.dataset.dir, 10) || 1) * Math.round(trackEl.clientWidth * 0.8), behavior: "smooth" });
       return;
     }
 

@@ -58,6 +58,7 @@ model CartSettings {
 
   // Upsell
   upsellEnabled           Boolean @default(false)
+  upsellSliderEnabled     Boolean @default(true)
   upsellTitle             String  @default("You might also like")
   upsellTriggerType       String  @default("cartValue")
   upsellMinCartValue      Float   @default(50)

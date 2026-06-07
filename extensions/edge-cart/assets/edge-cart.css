@@ -394,6 +394,7 @@
   transition: background 0.15s, border-color 0.15s;
 }
 .ec-item:hover { background: rgba(17, 17, 17, 0.04); }
+.ec-item--updating { opacity: 0.5; pointer-events: none; transition: opacity 0.15s; }
 @keyframes ec-slide-in {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
