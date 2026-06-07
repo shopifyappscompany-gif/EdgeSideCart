@@ -47,6 +47,7 @@ export const action = async ({ request }) => {
 
   const data = {
     upsellEnabled: form.get("upsellEnabled") === "true",
+    upsellSliderEnabled: form.get("upsellSliderEnabled") === "true",
     upsellTitle: String(form.get("upsellTitle") || "You might also like"),
     upsellTriggerType,
     upsellMinCartValue: parseFloat(form.get("upsellMinCartValue") || "50"),
@@ -77,6 +78,7 @@ export default function UpsellSettings() {
   const s = settings || {};
 
   const [enabled, setEnabled] = useState(s.upsellEnabled ?? false);
+  const [sliderEnabled, setSliderEnabled] = useState(s.upsellSliderEnabled ?? true);
   const [title, setTitle] = useState(s.upsellTitle ?? "You might also like");
   const [triggerType, setTriggerType] = useState(s.upsellTriggerType ?? "cartValue");
   const [minCartValue, setMinCartValue] = useState(s.upsellMinCartValue ?? 50);
@@ -90,7 +92,7 @@ export default function UpsellSettings() {
   const [aiLimit, setAiLimit] = useState(s.aiUpsellLimit ?? 4);
 
   function snap() {
-    return JSON.stringify({ enabled, title, triggerType, minCartValue, minQty,
+    return JSON.stringify({ enabled, sliderEnabled, title, triggerType, minCartValue, minQty,
       upsellProducts, triggerProducts, triggerCollections, aiEnabled, aiTitle, aiIntent, aiLimit });
   }
   const savedSnap = useRef(snap());
@@ -98,7 +100,7 @@ export default function UpsellSettings() {
 
   useEffect(() => {
     setIsDirty(snap() !== savedSnap.current);
-  }, [enabled, title, triggerType, minCartValue, minQty, upsellProducts, triggerProducts, triggerCollections,
+  }, [enabled, sliderEnabled, title, triggerType, minCartValue, minQty, upsellProducts, triggerProducts, triggerCollections,
       aiEnabled, aiTitle, aiIntent, aiLimit]);
 
   useEffect(() => {
@@ -112,6 +114,7 @@ export default function UpsellSettings() {
   function handleDiscard() {
     const s = settings || {};
     setEnabled(s.upsellEnabled ?? false);
+    setSliderEnabled(s.upsellSliderEnabled ?? true);
     setTitle(s.upsellTitle ?? "You might also like");
     setTriggerType(s.upsellTriggerType ?? "cartValue");
     setMinCartValue(s.upsellMinCartValue ?? 50);
@@ -168,6 +171,7 @@ export default function UpsellSettings() {
     fetcher.submit(
       {
         upsellEnabled: String(enabled),
+        upsellSliderEnabled: String(sliderEnabled),
         upsellTitle: title,
         upsellTriggerType: triggerType,
         upsellMinCartValue: String(minCartValue),
@@ -211,6 +215,18 @@ export default function UpsellSettings() {
                 style={inputStyle}
                 placeholder="You might also like"
               />
+            </div>
+          )}
+
+          {enabled && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <strong style={{ fontSize: 14 }}>Show Slider Arrows</strong>
+                <p style={{ margin: "4px 0 0", fontSize: 13, color: "#666" }}>
+                  Show left/right arrow buttons on the upsell carousel. Customers can still scroll or swipe.
+                </p>
+              </div>
+              <ToggleSwitch value={sliderEnabled} onChange={setSliderEnabled} />
             </div>
           )}
         </s-stack>

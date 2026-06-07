@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   customJs: "",
   freebieConfettiEnabled: true,
   upsellEnabled: false,
+  upsellSliderEnabled: true,
   upsellTitle: "You might also like",
   upsellTriggerType: "cartValue",
   upsellMinCartValue: 50,
