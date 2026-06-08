@@ -555,14 +555,24 @@ export default function GeneralSettings() {
                       <option value="collection">Cart contains product from collection(s)</option>
                     </select>
                     {ann.conditionType === "cartValue" && (
-                      <input type="number" min="0" value={ann.minCartValue ?? ""} style={{ ...inputStyle, marginTop: 8 }}
-                        placeholder="Minimum cart value (e.g. 50)"
-                        onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, minCartValue: e.target.value } : a))} />
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <input type="number" min="0" value={ann.minCartValue ?? ""} style={inputStyle}
+                          placeholder="Min cart value (e.g. 0)"
+                          onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, minCartValue: e.target.value } : a))} />
+                        <input type="number" min="0" value={ann.maxCartValue ?? ""} style={inputStyle}
+                          placeholder="Max (optional, e.g. 1000)"
+                          onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, maxCartValue: e.target.value } : a))} />
+                      </div>
                     )}
                     {ann.conditionType === "quantity" && (
-                      <input type="number" min="0" value={ann.minQuantity ?? ""} style={{ ...inputStyle, marginTop: 8 }}
-                        placeholder="Minimum quantity (e.g. 2)"
-                        onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, minQuantity: e.target.value } : a))} />
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <input type="number" min="0" value={ann.minQuantity ?? ""} style={inputStyle}
+                          placeholder="Min quantity (e.g. 1)"
+                          onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, minQuantity: e.target.value } : a))} />
+                        <input type="number" min="0" value={ann.maxQuantity ?? ""} style={inputStyle}
+                          placeholder="Max (optional, e.g. 5)"
+                          onChange={e => setAnnouncements(announcements.map((a, i) => i === idx ? { ...a, maxQuantity: e.target.value } : a))} />
+                      </div>
                     )}
                     {ann.conditionType === "product" && (
                       <div style={{ marginTop: 8 }}>
@@ -760,6 +770,13 @@ export default function GeneralSettings() {
                       <input type="text" value={c.description || ""} style={inputStyle}
                         onChange={e => setConfiguredDiscounts(configuredDiscounts.map((x, i) => i === idx ? { ...x, description: e.target.value } : x))}
                         placeholder="10% off on orders above $50" />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+                      <div>
+                        <strong style={{ fontSize: 13 }}>Show as one-click coupon</strong>
+                        <p style={{ margin: "2px 0 0", fontSize: 12, color: "#666" }}>Display this coupon directly in the cart (with Apply) without opening "View all coupons".</p>
+                      </div>
+                      <ToggleInline checked={!!c.oneClick} onChange={v => setConfiguredDiscounts(configuredDiscounts.map((x, i) => i === idx ? { ...x, oneClick: v } : x))} />
                     </div>
                   </div>
                 ))}
