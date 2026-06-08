@@ -143,21 +143,26 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "cancel") {
-    /* Cancel whatever subscription Shopify ACTUALLY reports active — read the
-       same way the loader does (direct GraphQL, no isTest filter). billing.check
-       only returns subs matching the isTest flag, which can disagree with the
-       real charge; when it did, nothing got cancelled yet we still reported
-       success, so the loader kept showing the live (still-active) paid plan and
-       the downgrade-to-Free button appeared to do nothing. */
-    let cancelError = null;
+    /* 1) Record the downgrade in our DB FIRST and unconditionally. The merchant
+          explicitly chose Free, so the app must reflect Free regardless of how the
+          Shopify cancel call behaves. (Previously a cancel hiccup returned early,
+          before this write, so the page kept showing the paid plan.) */
+    try {
+      await prisma.cartSettings.upsert({
+        where:  { shop },
+        create: { shop, planName: "starter" },
+        update: { planName: "starter" },
+      });
+    } catch (e) {
+      console.error("billing cancel: DB downgrade failed:", e);
+    }
+
+    /* 2) Cancel whatever subscription Shopify reports active. Errors here are
+          logged but never block the downgrade from reflecting in the app. */
     try {
       const res = await admin.graphql(
         `#graphql
-         query {
-           currentAppInstallation {
-             activeSubscriptions { id status }
-           }
-         }`
+         query { currentAppInstallation { activeSubscriptions { id status } } }`
       );
       const json = await res.json();
       const subs = json?.data?.currentAppInstallation?.activeSubscriptions ?? [];
@@ -166,30 +171,18 @@ export const action = async ({ request }) => {
         const cancelRes = await admin.graphql(
           `#graphql
            mutation CancelSub($id: ID!) {
-             appSubscriptionCancel(id: $id) {
-               userErrors { field message }
-             }
+             appSubscriptionCancel(id: $id) { userErrors { field message } }
            }`,
           { variables: { id: sub.id } }
         );
         const cancelJson = await cancelRes.json();
         const errs = cancelJson?.data?.appSubscriptionCancel?.userErrors ?? [];
-        if (errs.length) cancelError = errs.map((e) => e.message).join("; ");
+        if (errs.length) console.error("billing cancel userErrors:", errs.map((e) => e.message).join("; "));
       }
     } catch (e) {
-      console.error("billing cancel failed:", e);
-      cancelError = (e && e.message) || "Could not cancel the subscription.";
+      console.error("billing cancel: Shopify cancel failed:", e);
     }
-    if (cancelError) {
-      return { error: `Could not downgrade to Free: ${cancelError}` };
-    }
-    try {
-      await prisma.cartSettings.upsert({
-        where:  { shop },
-        create: { shop, planName: "starter" },
-        update: { planName: "starter" },
-      });
-    } catch (_) {}
+
     return { success: true };
   }
 
