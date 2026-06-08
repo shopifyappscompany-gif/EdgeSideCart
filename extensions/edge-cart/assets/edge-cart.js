@@ -1044,10 +1044,9 @@
     var list = enabledCoupons();
     if (!list.length) return "";
 
-    /* One-click coupons show directly in the cart; the rest live behind "View all". */
+    /* One-click coupons show directly in the cart; the rest open in the offers panel. */
     var featured = list.filter(function (c) { return c.oneClick; });
     var inline    = featured.map(couponCardHTML).join("");
-    var allCards  = list.map(couponCardHTML).join("");
     var moreCount = list.length - featured.length;
     var moreLabel = moreCount > 0
       ? "+" + moreCount + " more offer" + (moreCount > 1 ? "s" : "")
@@ -1055,7 +1054,7 @@
 
     return [
       inline ? '<div class="ec-coupons-inline">' + inline + '</div>' : "",
-      '<button class="ec-coupons__trigger" data-action="toggle-coupons" aria-expanded="' + (couponsOpen ? "true" : "false") + '">',
+      '<button class="ec-coupons__trigger" data-action="open-offers">',
         '<span class="ec-coupons__trigger-left">',
           '<span class="ec-coupons__badge">%</span>',
           '<span class="ec-coupons__more">' + esc(moreLabel) + '</span>',
@@ -1064,10 +1063,63 @@
           '<svg class="ec-coupons__chevron" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
         '</span>',
       '</button>',
-      '<div class="ec-coupons' + (couponsOpen ? ' ec-coupons--open' : '') + '">',
-        '<div class="ec-coupons__list">', allCards, '</div>',
+    ].join("");
+  }
+
+  /* ── Full "View all offers" slide-over panel (Corner-Cart style) ── */
+  function svgBackArrow() {
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+  function closeOffersPanel() {
+    var ex = id("ec-offers");
+    if (ex) { ex.classList.remove("ec-offers--open"); setTimeout(function () { if (ex.parentNode) ex.parentNode.removeChild(ex); }, 280); }
+  }
+  function openOffersPanel() {
+    closeOffersPanel();
+    var list = enabledCoupons();
+    var cards = list.map(function (c) {
+      var code = (c.code || "").toUpperCase();
+      var isActive = !!discountCode && code === discountCode;
+      return [
+        '<div class="ec-off-card' + (isActive ? ' ec-off-card--active' : '') + '">',
+          '<div class="ec-off-card__top">',
+            '<span class="ec-off-card__code"><span class="ec-off-card__badge">%</span>' + esc(code) + '</span>',
+            isActive
+              ? '<span class="ec-off-card__applied">✓ Applied</span>'
+              : '<button class="ec-off-card__apply" data-action="apply-coupon" data-code="' + esc(code) + '">Apply</button>',
+          '</div>',
+          c.description ? '<p class="ec-off-card__desc">' + esc(c.description) + '</p>' : '',
+        '</div>',
+      ].join("");
+    }).join("");
+    var cartVal = cart ? money(cart.total_price) : "";
+    var panel = make("div", "ec-offers");
+    panel.id = "ec-offers";
+    panel.innerHTML = [
+      '<div class="ec-offers__header">',
+        '<button class="ec-offers__back" data-action="offers-close" aria-label="Back">' + svgBackArrow() + '</button>',
+        '<div class="ec-offers__heading"><span class="ec-offers__title">Coupons</span><span class="ec-offers__sub">Cart value · ' + cartVal + '</span></div>',
+      '</div>',
+      '<div class="ec-offers__body">',
+        '<div class="ec-offers__inputwrap">',
+          '<span class="ec-offers__tagicon">' + svgTag() + '</span>',
+          '<input class="ec-offers__input" id="ec-offers-input" type="text" placeholder="Enter coupon code" autocomplete="off" spellcheck="false">',
+          '<button class="ec-offers__apply" id="ec-offers-apply">Apply</button>',
+        '</div>',
+        '<p class="ec-offers__label">AVAILABLE COUPONS</p>',
+        '<div class="ec-offers__list">' + (cards || '<p class="ec-offers__empty">No coupons available right now.</p>') + '</div>',
       '</div>',
     ].join("");
+    var drawer = id("ec-cart");
+    if (drawer) drawer.appendChild(panel);
+    requestAnimationFrame(function () { panel.classList.add("ec-offers--open"); });
+
+    var inp = id("ec-offers-input");
+    var applyB = id("ec-offers-apply");
+    if (inp && applyB) {
+      on(applyB, "click", function () { var v = inp.value.trim(); if (v) { applyDiscount(v); closeOffersPanel(); } });
+      on(inp, "keydown", function (e) { if (e.key === "Enter") { var v = inp.value.trim(); if (v) { applyDiscount(v); closeOffersPanel(); } } });
+    }
   }
 
   function renderFooter() {
@@ -1117,6 +1169,7 @@
         html += [
           '<div class="ec-discount">',
             '<div class="ec-discount__wrap">',
+              '<span class="ec-discount__tagicon">' + svgTag() + '</span>',
               '<input class="ec-discount__input" id="ec-disc-input" type="text" ',
                 'placeholder="Enter coupon code" ',
                 'value="' + esc(discountInputValue) + '" ',
@@ -3162,13 +3215,16 @@
       return;
     }
 
-    var couponToggle = e.target.closest("[data-action='toggle-coupons']");
-    if (couponToggle) { couponsOpen = !couponsOpen; renderFooter(); return; }
+    var offersOpen = e.target.closest("[data-action='open-offers']");
+    if (offersOpen) { openOffersPanel(); return; }
+
+    var offersClose = e.target.closest("[data-action='offers-close']");
+    if (offersClose) { closeOffersPanel(); return; }
 
     var couponApply = e.target.closest("[data-action='apply-coupon']");
     if (couponApply) {
       var cpnCode = couponApply.dataset.code;
-      if (cpnCode) { couponsOpen = false; applyDiscount(cpnCode); }
+      if (cpnCode) { closeOffersPanel(); applyDiscount(cpnCode); }
       return;
     }
 
@@ -3389,6 +3445,9 @@
   }
   function svgTrash() {
     return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2m2 0v14a1 1 0 01-1 1H7a1 1 0 01-1-1V6h12z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+  }
+  function svgTag() {
+    return '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 12.4V4.5a2 2 0 012-2h7.9a2 2 0 011.42.59l7.1 7.1a2 2 0 010 2.83l-7.4 7.4a2 2 0 01-2.83 0l-7.1-7.1A2 2 0 012.5 12.4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7.3" cy="7.3" r="1.5" fill="currentColor"/></svg>';
   }
   function svgChevron() {
     return '<svg class="ec-os__chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>';
