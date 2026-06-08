@@ -44,12 +44,13 @@ export const loader = async ({ request }) => {
      matches what Shopify shows (billing.check needs a matching isTest, which can
      disagree and make a paid merchant look "free"). Never throws to the page. */
   let activePlan = "Starter";
+  let periodEnd  = null;
   try {
     const res = await admin.graphql(
       `#graphql
        query {
          currentAppInstallation {
-           activeSubscriptions { name status }
+           activeSubscriptions { name status currentPeriodEnd }
          }
        }`
     );
@@ -57,6 +58,7 @@ export const loader = async ({ request }) => {
     const subs = json?.data?.currentAppInstallation?.activeSubscriptions ?? [];
     const active = subs.find((s) => s.status === "ACTIVE") ?? subs[0];
     if (active?.name) activePlan = active.name;
+    if (active?.currentPeriodEnd) periodEnd = active.currentPeriodEnd;
   } catch (_) {}
 
   let settings = null;
@@ -64,22 +66,31 @@ export const loader = async ({ request }) => {
     settings = await prisma.cartSettings.findUnique({ where: { shop } });
   } catch (_) {}
 
-  const dbPlan = settings?.planName ?? "starter";
-
-  /* Downgrade reflection: after a downgrade we cancel the Shopify subscription and
-     set our planName back to "starter", but Shopify keeps the cancelled sub ACTIVE
-     until the billing period ends (grace period). So if Shopify still reports a paid
-     sub yet our DB says the merchant downgraded to starter, show Free immediately.
-     (Upgrades are unaffected: subscribe sets planName to the paid plan, so this
-     only triggers on an actual downgrade.) */
-  if (activePlan !== "Starter" && dbPlan === "starter") {
-    activePlan = "Starter";
+  /* End-of-period downgrade model (standard SaaS / Shopify):
+     The live Shopify subscription is the source of truth. We lazily sync our DB
+     planName to it on each app load, so premium access naturally follows the real
+     plan: it stays paid through the grace period the merchant already paid for, then
+     drops to "starter" once Shopify actually ends the subscription. A pending
+     downgrade is cleared automatically once that happens. */
+  const effectivePlanName = activePlan === "Growth" ? "growth"
+                          : activePlan === "Scale"  ? "scale"
+                          : "starter";
+  let pendingDowngrade = settings?.pendingDowngrade ?? false;
+  if (settings) {
+    const updates = {};
+    if ((settings.planName ?? "starter") !== effectivePlanName) updates.planName = effectivePlanName;
+    if (pendingDowngrade && activePlan === "Starter") { updates.pendingDowngrade = false; pendingDowngrade = false; }
+    if (Object.keys(updates).length) {
+      try { await prisma.cartSettings.update({ where: { shop }, data: updates }); } catch (_) {}
+    }
   }
 
   return {
     activePlan,
-    planName:    dbPlan,
+    planName:    effectivePlanName,
     freeForever: settings?.freeForever ?? false,
+    pendingDowngrade,
+    periodEnd,
     shop,
   };
 };
@@ -116,8 +127,8 @@ export const action = async ({ request }) => {
     try {
       await prisma.cartSettings.upsert({
         where:  { shop },
-        create: { shop, planName: String(plan).toLowerCase() },
-        update: { planName: String(plan).toLowerCase() },
+        create: { shop, planName: String(plan).toLowerCase(), pendingDowngrade: false },
+        update: { planName: String(plan).toLowerCase(), pendingDowngrade: false },
       });
     } catch (_) {}
     try {
@@ -143,22 +154,23 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "cancel") {
-    /* 1) Record the downgrade in our DB FIRST and unconditionally. The merchant
-          explicitly chose Free, so the app must reflect Free regardless of how the
-          Shopify cancel call behaves. (Previously a cancel hiccup returned early,
-          before this write, so the page kept showing the paid plan.) */
+    /* 1) Mark a PENDING downgrade. End-of-period model: the merchant keeps their
+          paid plan + premium until the period they already paid for ends. We don't
+          force planName to "starter" here — the loader lazy-syncs planName to the
+          live Shopify subscription, so it drops to Free only once Shopify actually
+          ends the subscription. The flag drives the "Downgrading on …" notice. */
     try {
       await prisma.cartSettings.upsert({
         where:  { shop },
-        create: { shop, planName: "starter" },
-        update: { planName: "starter" },
+        create: { shop, pendingDowngrade: true },
+        update: { pendingDowngrade: true },
       });
     } catch (e) {
-      console.error("billing cancel: DB downgrade failed:", e);
+      console.error("billing cancel: DB pendingDowngrade failed:", e);
     }
 
-    /* 2) Cancel whatever subscription Shopify reports active. Errors here are
-          logged but never block the downgrade from reflecting in the app. */
+    /* 2) Cancel the Shopify subscription (takes effect at the end of the current
+          period). Errors are logged but never block the scheduled downgrade. */
     try {
       const res = await admin.graphql(
         `#graphql
@@ -279,7 +291,10 @@ function Tick({ color }) {
 }
 
 export default function BillingPage() {
-  const { activePlan, freeForever } = useLoaderData();
+  const { activePlan, freeForever, pendingDowngrade, periodEnd } = useLoaderData();
+  const downgradeDateStr = periodEnd
+    ? new Date(periodEnd).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+    : null;
   const navigate = useNavigate();
   const fetcher  = useFetcher();
 
@@ -328,6 +343,25 @@ export default function BillingPage() {
           borderRadius: 10, marginBottom: 16, color: "#b91c1c", fontSize: 13, fontWeight: 500,
         }}>
           ⚠️ {fetcher.data.error}
+        </div>
+      )}
+
+      {/* Scheduled downgrade notice — shown after the merchant chose Free while a
+          paid subscription is still in its already-paid period. */}
+      {pendingDowngrade && activeKey !== "starter" && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "14px 20px", background: "#fff4e5", border: "1px solid #ffd699",
+          borderRadius: 12, marginBottom: 16, color: "#8a5300",
+        }}>
+          <span style={{ fontSize: 20 }}>⏳</span>
+          <div>
+            <strong style={{ fontSize: 14 }}>Downgrade scheduled</strong>
+            <p style={{ margin: "2px 0 0", fontSize: 13 }}>
+              You'll keep your current plan and all premium features until{" "}
+              {downgradeDateStr ? <strong>{downgradeDateStr}</strong> : "the end of your current billing period"}, then automatically switch to Free. Pick a paid plan below to cancel the downgrade.
+            </p>
+          </div>
         </div>
       )}
 
