@@ -59,20 +59,6 @@ export const loader = async ({ request }) => {
     if (active?.name) activePlan = active.name;
   } catch (_) {}
 
-  /* 30-day order count */
-  let orderCount = 0;
-  try {
-    const since = new Date();
-    since.setDate(since.getDate() - 30);
-    const sinceStr = since.toISOString().slice(0, 10);
-    const res  = await admin.graphql(
-      `query OrderCount($q: String!) { ordersCount(query: $q) }`,
-      { variables: { q: `created_at:>=${sinceStr}` } }
-    );
-    const json = await res.json();
-    orderCount = json?.data?.ordersCount ?? 0;
-  } catch (_) {}
-
   let settings = null;
   try {
     settings = await prisma.cartSettings.findUnique({ where: { shop } });
@@ -80,7 +66,6 @@ export const loader = async ({ request }) => {
 
   return {
     activePlan,
-    orderCount,
     planName:    settings?.planName    ?? "starter",
     freeForever: settings?.freeForever ?? false,
     shop,
@@ -205,7 +190,7 @@ const PLANS = [
     key:        "starter",
     name:       "Starter",
     price:      "Free",
-    sub:        "Up to 40 orders / month",
+    sub:        "Core cart features — free forever",
     highlight:  false,
     badge:      null,
     trial:      null,
@@ -217,7 +202,7 @@ const PLANS = [
     key:        "growth",
     name:       "Growth",
     price:      "$7",
-    sub:        "per month · up to 200 orders",
+    sub:        "per month",
     highlight:  true,
     badge:      "Most Popular",
     trial:      "7-day free trial",
@@ -229,7 +214,7 @@ const PLANS = [
     key:        "enterprise",
     name:       "Scale",
     price:      "$19",
-    sub:        "per month · unlimited orders",
+    sub:        "per month",
     highlight:  false,
     badge:      "Best for high volume",
     trial:      "7-day free trial",
@@ -241,10 +226,12 @@ const PLANS = [
 
 /* Features — ordered by priority (upsell & freebie first) */
 const FEATURES = [
-  { icon: "☑️", label: "One-Click Upsell (checkbox below cart items)" },
-  { icon: "⚡", label: "AI-powered upsell (Shopify Recommendations API)" },
-  { icon: "🎁", label: "Freebie / free gift (up to 5 simultaneous offers)" },
-  { icon: "🎁", label: "Freebie condition logic (AND / OR, cart value & quantity)" },
+  { icon: "☑️", label: "One-Click Upsell (checkbox below cart items)", premium: true },
+  { icon: "⚡", label: "AI-powered upsell (Shopify Recommendations API)", premium: true },
+  { icon: "🎁", label: "Freebie / free gift (up to 5 simultaneous offers)", premium: true },
+  { icon: "🎁", label: "Freebie condition logic (AND / OR, cart value & quantity)", premium: true },
+  { icon: "🏷", label: "Discount code field (validated & applied in cart)" },
+  { icon: "🎟", label: "View all offers — one-click coupon list" },
   { icon: "🏆", label: "Tiered rewards progress bar + confetti" },
   { icon: "🚢", label: "Free shipping progress bar" },
   { icon: "🛍", label: "Volume discounts display" },
@@ -287,7 +274,7 @@ function Tick({ color }) {
 }
 
 export default function BillingPage() {
-  const { activePlan, orderCount, freeForever } = useLoaderData();
+  const { activePlan, freeForever } = useLoaderData();
   const navigate = useNavigate();
   const fetcher  = useFetcher();
 
@@ -311,8 +298,6 @@ export default function BillingPage() {
                    : activePlan === "Scale"  ? "enterprise"
                    : "starter";
   const currentKey = freeForever ? "forever-free" : activeKey;
-  const overLimit  = (currentKey === "starter" && orderCount > 40) ||
-                     (currentKey === "growth"  && orderCount > 200);
 
   const busy = fetcher.state !== "idle";
 
@@ -341,28 +326,19 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* Order count banner */}
+      {/* Trial / status banner */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
-        padding: "14px 20px", background: overLimit ? "#fef2f2" : "#f0fdf4",
-        borderRadius: 12, marginBottom: 28,
-        border: `1px solid ${overLimit ? "#fecaca" : "#bbf7d0"}`,
+        padding: "14px 20px", background: "#f0fdf4",
+        borderRadius: 12, marginBottom: 28, border: "1px solid #bbf7d0",
       }}>
-        <span style={{ fontSize: 22 }}>{overLimit ? "⚠️" : "✅"}</span>
+        <span style={{ fontSize: 22 }}>🎁</span>
         <div>
-          <strong style={{ fontSize: 14, color: overLimit ? "#dc2626" : "#15803d" }}>
-            {orderCount} orders in the last 30 days
+          <strong style={{ fontSize: 14, color: "#15803d" }}>
+            45-day free trial of all premium features
           </strong>
           <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>
-            {currentKey === "starter" && overLimit
-              ? "You've exceeded the free plan limit (40 orders). Upgrade to Growth to continue."
-              : currentKey === "growth" && overLimit
-                ? "You've exceeded 200 orders this month. Upgrade to Scale for unlimited orders."
-                : currentKey === "starter"
-                  ? `${40 - orderCount} orders remaining on your free plan this month.`
-                  : currentKey === "growth"
-                    ? `${200 - orderCount > 0 ? 200 - orderCount : 0} orders remaining before Scale is recommended.`
-                    : "Unlimited orders on your current plan."}
+            Freebie, Upsell & AI Upsell are free for your first 45 days. After that, keep them by upgrading to Growth or Scale.
           </p>
         </div>
         {freeForever && (
@@ -426,7 +402,7 @@ export default function BillingPage() {
 
               {/* What's included */}
               <p style={{ margin: "0 0 10px", fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.8 }}>
-                {plan.key === "enterprise" ? "Everything in Growth, plus:" : plan.key === "growth" ? "All features included:" : "All features included:"}
+                {plan.key === "enterprise" ? "Everything in Growth, plus:" : plan.key === "growth" ? "All features included:" : "Included (premium free for 45 days):"}
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {plan.key === "enterprise"
@@ -436,12 +412,18 @@ export default function BillingPage() {
                         <span>{f.icon} {f.label}</span>
                       </div>
                     ))
-                  : FEATURES.slice(0, plan.key === "starter" ? 8 : FEATURES.length).map(f => (
-                      <div key={f.label} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 13, color: "#374151" }}>
-                        <Tick color={plan.highlight ? "#e0e7ff" : "#dcfce7"} />
-                        <span>{f.label}</span>
-                      </div>
-                    ))
+                  : FEATURES.slice(0, plan.key === "starter" ? 8 : FEATURES.length).map(f => {
+                      const trialOnly = plan.key === "starter" && f.premium;
+                      return (
+                        <div key={f.label} style={{ display: "flex", gap: 9, alignItems: "flex-start", fontSize: 13, color: "#374151" }}>
+                          <Tick color={plan.highlight ? "#e0e7ff" : "#dcfce7"} />
+                          <span>
+                            {f.label}
+                            {trialOnly && <span style={{ color: "#b45309", fontWeight: 700 }}> · free 45 days</span>}
+                          </span>
+                        </div>
+                      );
+                    })
                 }
                 {plan.key === "starter" && (
                   <p style={{ margin: "4px 0 0", fontSize: 12, color: "#9ca3af" }}>
@@ -474,11 +456,12 @@ export default function BillingPage() {
           </thead>
           <tbody>
             {[
-              ["Orders / month",                                    "40",   "Up to 200", "Unlimited"],
-              ["☑️ One-Click Upsell",                               false,  true,        true],
-              ["⚡ AI-powered upsell (Recommendations API)",        false,  true,        true],
-              ["🎁 Freebie / free gift (up to 5 offers)",          false,  true,        true],
-              ["🎁 Freebie condition logic (AND / OR)",             false,  true,        true],
+              ["☑️ One-Click Upsell",                               "45 days", true,     true],
+              ["⚡ AI-powered upsell (Recommendations API)",        "45 days", true,     true],
+              ["🎁 Freebie / free gift (up to 5 offers)",          "45 days", true,     true],
+              ["🎁 Freebie condition logic (AND / OR)",             "45 days", true,     true],
+              ["🏷 Discount code field",                            true,   true,        true],
+              ["🎟 View all offers / coupon list",                  true,   true,        true],
               ["🏆 Tiered rewards progress bar + confetti",         false,  true,        true],
               ["🚢 Free shipping progress bar",                     false,  true,        true],
               ["🛍 Volume discounts display",                       false,  true,        true],
