@@ -4,16 +4,26 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
+import { isPremiumLocked } from "../trial.server";
+
+const LOCK_MSG = "Your free trial has ended. Upgrade to Growth or Scale to use this feature, or contact EdgeCart support.";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const settings = await prisma.cartSettings.findUnique({ where: { shop: session.shop } });
-  return { settings };
+  return { settings, locked: isPremiumLocked(settings) };
 };
 
 export const action = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
+
+  /* Free-plan trial gate — block configuring Freebie once the trial has ended. */
+  const lockSettings = await prisma.cartSettings.findUnique({ where: { shop } });
+  if (isPremiumLocked(lockSettings)) {
+    return { error: LOCK_MSG, locked: true };
+  }
+
   const form = await request.formData();
   const intent = form.get("intent");
 
@@ -217,7 +227,7 @@ function initOffers(s) {
 }
 
 export default function FreebieSettings() {
-  const { settings } = useLoaderData();
+  const { settings, locked } = useLoaderData();
   const fetcher = useFetcher();
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
@@ -330,7 +340,13 @@ export default function FreebieSettings() {
 
   return (
     <s-page heading="Free Gift (Freebie) Settings">
-      {isDirty && <SaveBar onSave={handleSave} onDiscard={handleDiscard} saving={saving && !creatingForId} />}
+      {locked && (
+        <div style={{ margin: "0 0 16px", padding: "14px 16px", background: "#fff4e5", border: "1px solid #ffd699", borderRadius: 10, color: "#8a5300" }}>
+          <strong style={{ display: "block", fontSize: 14, marginBottom: 4 }}>🔒 Freebie is a premium feature</strong>
+          <span style={{ fontSize: 13 }}>Your free trial has ended. Please <a href="/app/billing" style={{ color: "#8a5300", fontWeight: 700 }}>upgrade to Growth or Scale</a> to use Freebie, or contact EdgeCart support to extend your trial.</span>
+        </div>
+      )}
+      {!locked && isDirty && <SaveBar onSave={handleSave} onDiscard={handleDiscard} saving={saving && !creatingForId} />}
 
       <s-section heading="Display">
         <s-stack direction="block" gap="base">

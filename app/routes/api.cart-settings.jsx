@@ -1,5 +1,6 @@
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { isPremiumLocked } from "../trial.server";
 
 /* In-memory Storefront token cache — persists for the life of the server process.
    Avoids an extra REST round-trip on every cart-settings call once token is known. */
@@ -234,6 +235,16 @@ export const loader = async ({ request }) => {
       announcements: safeParseJSON(settings.announcements, []),
       productPageUpsellProducts: safeParseJSON(settings.productPageUpsellProducts, []),
     };
+
+    /* Free-plan trial gate: once the trial ends, premium features (Freebie, Upsell,
+       AI Upsell) are turned off on the storefront regardless of saved config. */
+    if (isPremiumLocked(settings)) {
+      payload.freebieEnabled  = false;
+      payload.freebieOffers   = [];
+      payload.upsellEnabled   = false;
+      payload.aiUpsellEnabled = false;
+      payload.premiumLocked   = true;
+    }
 
     return new Response(JSON.stringify(payload), {
       status: 200,
