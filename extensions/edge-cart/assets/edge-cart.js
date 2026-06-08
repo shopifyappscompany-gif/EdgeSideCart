@@ -100,7 +100,14 @@
           sessionStorage.removeItem("ec-reopen-cart");
           setTimeout(openCart, 300);
         }
-        restoreDiscountState();
+        /* Shared-cart link (?ec_cart=…&ec_discount=…) — rebuild the cart, apply the
+           shared discount, and open the side cart directly (never the checkout). */
+        var sharedHandled = false;
+        try {
+          var sp = new URLSearchParams(window.location.search);
+          if (sp.get("ec_cart")) { handleSharedCart(sp.get("ec_cart"), sp.get("ec_discount")); sharedHandled = true; }
+        } catch (_) {}
+        if (!sharedHandled) restoreDiscountState();
         if (settings.autoDiscountEnabled && settings.autoDiscountCode && !discountCode) {
           applyDiscount(settings.autoDiscountCode);
         }
@@ -429,6 +436,42 @@
     }
   }
 
+  /* Remove the shared-cart params from the URL after we've consumed them. */
+  function cleanShareUrl() {
+    try {
+      var u = new URL(window.location.href);
+      u.searchParams.delete("ec_cart");
+      u.searchParams.delete("ec_discount");
+      window.history.replaceState({}, "", u.pathname + (u.searchParams.toString() ? "?" + u.searchParams.toString() : "") + u.hash);
+    } catch (_) {}
+  }
+
+  /* Open a shared cart link: add its items, apply its discount, open the side cart. */
+  function handleSharedCart(spec, disc) {
+    var items = String(spec || "").split(",").map(function (pair) {
+      var p = pair.split(":");
+      return { id: p[0], quantity: parseInt(p[1], 10) || 1 };
+    }).filter(function (it) { return it.id; });
+    if (!items.length) { restoreDiscountState(); cleanShareUrl(); return; }
+
+    fetch("/cart/add.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      credentials: "same-origin",
+      body: JSON.stringify({ items: items }),
+    }).then(function () { return loadCart(); })
+      .then(function (c) {
+        cart = c;
+        var finish = function () { render(); openCart(); syncFreebie(); cleanShareUrl(); };
+        if (disc) {
+          applyDiscount(disc).then(finish, finish);
+        } else {
+          restoreDiscountState(); finish();
+        }
+      })
+      .catch(function () { restoreDiscountState(); cleanShareUrl(); });
+  }
+
   function buildDOM() {
     var overlay = make("div", "ec-overlay");
     overlay.id  = "ec-overlay";
@@ -493,8 +536,18 @@
     var ct = ann.conditionType || "always";
     if (ct === "always") return true;
     if (!cart) return false;
-    if (ct === "cartValue") return (cart.total_price / 100) >= (parseFloat(ann.minCartValue) || 0);
-    if (ct === "quantity")  return (cart.item_count || 0) >= (parseInt(ann.minQuantity, 10) || 0);
+    if (ct === "cartValue") {
+      var val = cart.total_price / 100;
+      var minV = parseFloat(ann.minCartValue); if (isNaN(minV)) minV = 0;
+      var maxV = parseFloat(ann.maxCartValue);
+      return val >= minV && (isNaN(maxV) || maxV <= 0 || val <= maxV);
+    }
+    if (ct === "quantity") {
+      var qty = cart.item_count || 0;
+      var minQ = parseInt(ann.minQuantity, 10); if (isNaN(minQ)) minQ = 0;
+      var maxQ = parseInt(ann.maxQuantity, 10);
+      return qty >= minQ && (isNaN(maxQ) || maxQ <= 0 || qty <= maxQ);
+    }
     if (ct === "product") {
       var ids = (ann.productIds || []).map(function (p) { return String(typeof p === "object" ? extractId(p.id) : p); });
       if (!ids.length) return true;
@@ -543,17 +596,19 @@
     });
   }
 
-  /* Sets banner text/colors; slides the new message in only when the text actually
-     changes (so rotation animates, but ordinary re-renders don't flicker). */
+  /* Sets banner colors and slides only the TEXT (an inner span) in on change — the
+     bar itself stays put, so the height never jumps. Ordinary re-renders don't animate. */
   function setBannerContent(el, text, bg, color) {
-    el.textContent      = text;
     el.style.display    = "";
     el.style.background = bg;
     el.style.color      = color;
-    if (text !== lastBannerText) {
-      el.style.animation = "none";
-      void el.offsetWidth; /* force reflow so the animation restarts */
-      el.style.animation = "ec-banner-slide 0.45s var(--ec-ease)";
+    var span = el.firstChild && el.firstChild.className === "ec-banner__text" ? el.firstChild : null;
+    if (text !== lastBannerText || !span) {
+      el.innerHTML = '<span class="ec-banner__text">' + esc(text) + '</span>';
+      span = el.firstChild;
+      span.style.animation = "none";
+      void span.offsetWidth; /* force reflow so the animation restarts */
+      span.style.animation = "ec-banner-slide 0.4s var(--ec-ease)";
       lastBannerText = text;
     }
   }
@@ -968,37 +1023,49 @@
   /* "View all coupons" trigger + expandable list of coupon cards (screenshot UI).
      Codes come from app settings; tapping Apply runs the same validated flow as
      the discount field, so eligibility is enforced by Shopify. */
+  function couponCardHTML(c) {
+    var code = (c.code || "").toUpperCase();
+    var isActive = !!discountCode && code === discountCode;
+    return [
+      '<div class="ec-coupon' + (isActive ? ' ec-coupon--active' : '') + '">',
+        '<div class="ec-coupon__info">',
+          '<span class="ec-coupon__code">🏷 ' + esc(code) + '</span>',
+          c.description ? '<span class="ec-coupon__desc">' + esc(c.description) + '</span>' : '',
+        '</div>',
+        isActive
+          ? '<span class="ec-coupon__applied">✓ Applied</span>'
+          : '<button class="ec-coupon__apply" data-action="apply-coupon" data-code="' + esc(code) + '">Apply</button>',
+      '</div>',
+    ].join("");
+  }
+
   function buildCouponsHTML() {
     if (!settings.offersEnabled) return "";
     var list = enabledCoupons();
     if (!list.length) return "";
 
-    var cards = list.map(function (c) {
-      var code = (c.code || "").toUpperCase();
-      var isActive = !!discountCode && code === discountCode;
-      return [
-        '<div class="ec-coupon' + (isActive ? ' ec-coupon--active' : '') + '">',
-          '<div class="ec-coupon__info">',
-            '<span class="ec-coupon__code">🏷 ' + esc(code) + '</span>',
-            c.description ? '<span class="ec-coupon__desc">' + esc(c.description) + '</span>' : '',
-          '</div>',
-          isActive
-            ? '<span class="ec-coupon__applied">✓ Applied</span>'
-            : '<button class="ec-coupon__apply" data-action="apply-coupon" data-code="' + esc(code) + '">Apply</button>',
-        '</div>',
-      ].join("");
-    }).join("");
+    /* One-click coupons show directly in the cart; the rest live behind "View all". */
+    var featured = list.filter(function (c) { return c.oneClick; });
+    var inline    = featured.map(couponCardHTML).join("");
+    var allCards  = list.map(couponCardHTML).join("");
+    var moreCount = list.length - featured.length;
+    var moreLabel = moreCount > 0
+      ? "+" + moreCount + " more offer" + (moreCount > 1 ? "s" : "")
+      : "View all offers";
 
     return [
+      inline ? '<div class="ec-coupons-inline">' + inline + '</div>' : "",
       '<button class="ec-coupons__trigger" data-action="toggle-coupons" aria-expanded="' + (couponsOpen ? "true" : "false") + '">',
-        '<span class="ec-coupons__trigger-label">🎟 View All Offers</span>',
-        '<span class="ec-coupons__trigger-side">',
-          '<span class="ec-coupons__count">' + list.length + '</span>',
-          '<svg class="ec-coupons__chevron" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        '<span class="ec-coupons__trigger-left">',
+          '<span class="ec-coupons__badge">%</span>',
+          '<span class="ec-coupons__more">' + esc(moreLabel) + '</span>',
+        '</span>',
+        '<span class="ec-coupons__trigger-right">View all coupons',
+          '<svg class="ec-coupons__chevron" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
         '</span>',
       '</button>',
       '<div class="ec-coupons' + (couponsOpen ? ' ec-coupons--open' : '') + '">',
-        '<div class="ec-coupons__list">', cards, '</div>',
+        '<div class="ec-coupons__list">', allCards, '</div>',
       '</div>',
     ].join("");
   }
@@ -1023,12 +1090,6 @@
 
     /* Volume discounts */
     if (settings.volumeDiscountEnabled) html += buildVolumeDiscountHTML();
-
-    /* Static upsell */
-    if (settings.upsellEnabled) html += buildUpsellHTML();
-
-    /* AI upsell (Shopify Recommendations API) */
-    if (settings.aiUpsellEnabled) html += buildAiUpsellHTML();
 
     /* Discount field — shown only when merchant enables it in app settings */
     if (settings.discountEnabled) {
@@ -1077,6 +1138,12 @@
       /* "View all coupons" — merchant-configured code list (screenshot UI) */
       html += buildCouponsHTML();
     }
+
+    /* Static upsell — placed below the discount/coupons */
+    if (settings.upsellEnabled) html += buildUpsellHTML();
+
+    /* AI upsell (Shopify Recommendations API) */
+    if (settings.aiUpsellEnabled) html += buildAiUpsellHTML();
 
     /* Order Notes */
     if (settings.orderNotesEnabled) {
@@ -1226,8 +1293,13 @@
     var shareBtn = id("ec-cart-share-btn");
     if (shareBtn) {
       on(shareBtn, "click", function () {
-        var permalink = "https://" + window.location.hostname + "/cart/" +
-          cart.items.map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
+        /* Custom share link so the recipient lands on the side cart (not checkout),
+           and the applied discount carries over. Freebies auto-add, so skip them. */
+        var spec = cart.items
+          .filter(function (i) { return !(i.properties && i.properties._edge_cart_freebie === "true"); })
+          .map(function (i) { return i.variant_id + ":" + i.quantity; }).join(",");
+        var permalink = window.location.origin + "/?ec_cart=" + encodeURIComponent(spec) +
+          (discountCode ? "&ec_discount=" + encodeURIComponent(discountCode) : "");
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(permalink).then(function () {
             shareBtn.textContent = "Link copied!";
