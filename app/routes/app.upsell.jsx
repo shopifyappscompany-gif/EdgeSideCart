@@ -4,16 +4,24 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
+import { isPremiumLocked } from "../trial.server";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const settings = await prisma.cartSettings.findUnique({ where: { shop: session.shop } });
-  return { settings };
+  return { settings, locked: isPremiumLocked(settings) };
 };
 
 export const action = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
+
+  /* Free-plan trial gate — block configuring Upsell / AI Upsell once the trial ends. */
+  const lockSettings = await prisma.cartSettings.findUnique({ where: { shop } });
+  if (isPremiumLocked(lockSettings)) {
+    return { error: "Your free trial has ended. Upgrade to Growth or Scale to use this feature, or contact EdgeCart support.", locked: true };
+  }
+
   const form = await request.formData();
 
   const upsellTriggerType = String(form.get("upsellTriggerType") || "cartValue");
@@ -71,7 +79,7 @@ export const action = async ({ request }) => {
 };
 
 export default function UpsellSettings() {
-  const { settings } = useLoaderData();
+  const { settings, locked } = useLoaderData();
   const fetcher = useFetcher();
   const shopify = useAppBridge();
   const saving = fetcher.state !== "idle";
@@ -190,7 +198,13 @@ export default function UpsellSettings() {
 
   return (
     <s-page heading="Upsell Settings">
-      {isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}
+      {locked && (
+        <div style={{ margin: "0 0 16px", padding: "14px 16px", background: "#fff4e5", border: "1px solid #ffd699", borderRadius: 10, color: "#8a5300" }}>
+          <strong style={{ display: "block", fontSize: 14, marginBottom: 4 }}>🔒 Upsell is a premium feature</strong>
+          <span style={{ fontSize: 13 }}>Your free trial has ended. Please <a href="/app/billing" style={{ color: "#8a5300", fontWeight: 700 }}>upgrade to Growth or Scale</a> to use Upsell &amp; AI Upsell, or contact EdgeCart support to extend your trial.</span>
+        </div>
+      )}
+      {!locked && isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}
 
       {/* Enable toggle */}
       <s-section heading="Upsell Feature">

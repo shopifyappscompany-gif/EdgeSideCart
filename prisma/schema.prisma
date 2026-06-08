@@ -138,6 +138,7 @@ model CartSettings {
   // Billing plan: "starter" | "growth" | "enterprise"
   planName    String  @default("starter")
   freeForever Boolean @default(false)
+  trialDays   Int     @default(45)   // free-plan premium-feature trial length (days from install). Editable per-shop in DB.
 
   // Free Shipping Progress Bar
   freeShippingBarEnabled   Boolean @default(false)
