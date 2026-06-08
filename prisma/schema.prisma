@@ -139,6 +139,7 @@ model CartSettings {
   planName    String  @default("starter")
   freeForever Boolean @default(false)
   trialDays   Int     @default(45)   // free-plan premium-feature trial length (days from install). Editable per-shop in DB.
+  pendingDowngrade Boolean @default(false)   // merchant clicked "Downgrade to Free"; keeps plan until Shopify period ends
 
   // Free Shipping Progress Bar
   freeShippingBarEnabled   Boolean @default(false)
