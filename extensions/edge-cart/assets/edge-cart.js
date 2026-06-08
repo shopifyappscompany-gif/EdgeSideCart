@@ -322,6 +322,10 @@
         appliedDiscount = null;
         discountError   = "Invalid discount code or not applicable to your cart.";
         discountLoading = false;
+        /* Clean it out of the cart session so an inapplicable code (e.g. minimum
+           not met yet) doesn't linger and auto-apply later once the cart qualifies.
+           Discounts only apply when the customer actively enters/selects them. */
+        try { var c2 = await applyDiscountSession(""); cart = (c2 && c2.items) ? c2 : await loadCart(); } catch (_) {}
         if (isOpen) renderFooter();
         return;
       }
@@ -2387,6 +2391,11 @@
         : (price ? '<p class="ec-upsell-card__price">' + price + '</p>' : "");
       var img   = p.featuredImage && p.featuredImage.url ? p.featuredImage.url : "";
       var handle = p.handle || "";
+      var multiVariant = (p.variants || []).length > 1;
+      /* Multi-variant → open a "Select Variant" panel; single → add directly. */
+      var addBtn = multiVariant
+        ? '<button class="ec-upsell-card__add" data-action="upsell-variants" data-handle="' + esc(handle) + '" aria-label="Choose a variant of ' + esc(p.title) + '">+ Add</button>'
+        : '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(vid) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>';
       return [
         '<div class="ec-upsell-card" data-handle="' + esc(handle) + '" data-variant="' + esc(vid) + '">',
           img
@@ -2395,7 +2404,7 @@
           '<div class="ec-upsell-card__body">',
             '<p class="ec-upsell-card__name">' + esc(p.title) + '</p>',
             priceHTML,
-            '<button class="ec-upsell-card__add" data-action="upsell" data-variant="' + esc(vid) + '" aria-label="Add ' + esc(p.title) + '">+ Add</button>',
+            addBtn,
           '</div>',
         '</div>',
       ].join("");
@@ -2414,6 +2423,56 @@
         '</div>',
       '</div>',
     ].join("");
+  }
+
+  /* ── Variant selector for multi-variant upsell products ── */
+  function closeVariantSelector() {
+    var ex = id("ec-vs");
+    if (ex && ex.parentNode) ex.parentNode.removeChild(ex);
+  }
+  function openVariantSelector(handle) {
+    if (!handle) return;
+    /* Fetch live product data so variant prices + availability are accurate. */
+    fetch("/products/" + encodeURIComponent(handle) + ".js", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (prod) {
+        if (!prod || !prod.variants || !prod.variants.length) { showToast("Couldn't load variants.", 3000, false); return; }
+        renderVariantSelector(prod);
+      })
+      .catch(function () { showToast("Couldn't load variants.", 3000, false); });
+  }
+  function renderVariantSelector(prod) {
+    closeVariantSelector();
+    var rows = (prod.variants || []).map(function (v) {
+      var sold = v.available === false;
+      return [
+        '<div class="ec-vs__row' + (sold ? ' ec-vs__row--sold' : '') + '">',
+          '<div class="ec-vs__info">',
+            '<span class="ec-vs__name">' + esc(v.title) + '</span>',
+            '<span class="ec-vs__price">' + money(v.price) + '</span>',
+          '</div>',
+          sold
+            ? '<span class="ec-vs__sold">Sold out</span>'
+            : '<button class="ec-vs__add" data-action="vs-add" data-variant="' + esc(String(v.id)) + '">Add to cart</button>',
+        '</div>',
+      ].join("");
+    }).join("");
+    var panel = make("div", "ec-vs");
+    panel.id = "ec-vs";
+    panel.innerHTML = [
+      '<div class="ec-vs__overlay" data-action="vs-close"></div>',
+      '<div class="ec-vs__sheet" role="dialog" aria-modal="true" aria-label="Select variant">',
+        '<div class="ec-vs__header">',
+          '<span class="ec-vs__title">Select Variant</span>',
+          '<button class="ec-vs__close" data-action="vs-close" aria-label="Close">×</button>',
+        '</div>',
+        '<p class="ec-vs__product">' + esc(prod.title) + '</p>',
+        '<div class="ec-vs__list">' + rows + '</div>',
+      '</div>',
+    ].join("");
+    var drawer = id("ec-cart");
+    if (drawer) drawer.appendChild(panel);
+    requestAnimationFrame(function () { panel.classList.add("ec-vs--open"); });
   }
 
   /* ── Live price + availability refresh for static upsell ── */
@@ -2996,6 +3055,32 @@
 
     var discRemoveBtn = e.target.closest("[data-action='discount-remove']");
     if (discRemoveBtn) { clearDiscount(); return; }
+
+    var upsellVariants = e.target.closest("[data-action='upsell-variants']");
+    if (upsellVariants) { openVariantSelector(upsellVariants.dataset.handle); return; }
+
+    var vsClose = e.target.closest("[data-action='vs-close']");
+    if (vsClose) { closeVariantSelector(); return; }
+
+    var vsAdd = e.target.closest("[data-action='vs-add']");
+    if (vsAdd) {
+      var vvid = vsAdd.dataset.variant;
+      if (!vvid) return;
+      vsAdd.disabled = true;
+      vsAdd.textContent = "Adding…";
+      cartAdd(vvid, 1, {})
+        .then(function () {
+          track("upsell_add", { variantId: vvid, revenue: cart ? cart.total_price : 0 });
+          closeVariantSelector();
+          render(); syncFreebie();
+        })
+        .catch(function (err) {
+          vsAdd.disabled = false;
+          vsAdd.textContent = "Add to cart";
+          showToast((err && err.message) || "Couldn't add this item — it may be sold out.", 4000, false);
+        });
+      return;
+    }
 
     var upsellScroll = e.target.closest("[data-action='upsell-scroll']");
     if (upsellScroll) {

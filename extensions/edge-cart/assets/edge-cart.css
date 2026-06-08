@@ -1173,6 +1173,81 @@ a.ec-item__title--link:hover {
 .ec-coupon__apply:hover { filter: brightness(1.12); }
 .ec-coupon__apply:active { transform: scale(0.96); }
 .ec-coupon__applied { flex-shrink: 0; font-size: 12.5px; font-weight: 700; color: #15803d; }
+
+/* ── Upsell variant selector (bottom sheet inside the drawer) ── */
+.ec-vs {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.ec-vs__overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.25s var(--ec-ease);
+}
+.ec-vs--open .ec-vs__overlay { opacity: 1; }
+.ec-vs__sheet {
+  position: relative;
+  background: #fff;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  max-height: 72%;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(100%);
+  transition: transform 0.3s var(--ec-ease);
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.18);
+}
+.ec-vs--open .ec-vs__sheet { transform: translateY(0); }
+.ec-vs__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 6px;
+}
+.ec-vs__title { font-size: 15px; font-weight: 800; color: #111; }
+.ec-vs__close {
+  background: none; border: none; cursor: pointer;
+  font-size: 22px; line-height: 1; color: #888; padding: 0 4px;
+}
+.ec-vs__product { margin: 0 18px 8px; font-size: 13px; color: #666; }
+.ec-vs__list { overflow-y: auto; padding: 4px 14px 18px; }
+.ec-vs__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px;
+  margin-bottom: 8px;
+  border: 1.5px solid #eee;
+  border-radius: 12px;
+}
+.ec-vs__row--sold { opacity: 0.55; }
+.ec-vs__info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ec-vs__name { font-size: 13.5px; font-weight: 600; color: #111; }
+.ec-vs__price { font-size: 13px; font-weight: 700; color: #111; }
+.ec-vs__add {
+  flex-shrink: 0;
+  padding: 9px 16px;
+  background: var(--ec-primary, #1a1a1a);
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.15s, transform 0.08s;
+}
+.ec-vs__add:hover:not(:disabled) { filter: brightness(1.12); }
+.ec-vs__add:active:not(:disabled) { transform: scale(0.96); }
+.ec-vs__add:disabled { opacity: 0.6; cursor: default; }
+.ec-vs__sold { flex-shrink: 0; font-size: 12px; font-weight: 700; color: #b91c1c; }
 /* Applied discount badge */
 .ec-discount__applied-row {
   display: flex;

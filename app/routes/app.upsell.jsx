@@ -141,9 +141,9 @@ export default function UpsellSettings() {
         title: p.title,
         handle: p.handle,
         featuredImage: p.images?.[0] ? { url: p.images[0].url || p.images[0].originalSrc || p.images[0].src || "" } : null,
-        variants: (p.variants || []).slice(0, 1).map((v) => ({
+        variants: (p.variants || []).map((v) => ({
           id: v.id,
-          title: v.displayName || v.title,
+          title: v.title || v.displayName,
           price: v.price,
         })),
       }));
