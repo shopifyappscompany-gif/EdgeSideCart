@@ -100,7 +100,8 @@
           sessionStorage.removeItem("ec-reopen-cart");
           setTimeout(openCart, 300);
         }
-        if (settings.autoDiscountEnabled && settings.autoDiscountCode) {
+        restoreDiscountState();
+        if (settings.autoDiscountEnabled && settings.autoDiscountCode && !discountCode) {
           applyDiscount(settings.autoDiscountCode);
         }
         syncFreebie();
@@ -222,6 +223,16 @@
       if ((da.type || "") === "discount_code") sum += allocs[j].amount || 0;
     }
     return sum;
+  }
+  /* The actual code Shopify allocated to this line (e.g. "AMOUNTOFFPRODUCT"),
+     read from its own data — so the per-line badge never shows a generic/phantom label. */
+  function lineCodeTitle(line) {
+    var allocs = (line && line.line_level_discount_allocations) || [];
+    for (var j = 0; j < allocs.length; j++) {
+      var da = allocs[j].discount_application || {};
+      if ((da.type || "") === "discount_code") return (da.title || da.code || "").toUpperCase();
+    }
+    return "";
   }
   function codeAllocatedSavings() {
     if (!cart) return 0;
@@ -383,6 +394,35 @@
       cart = (updated && updated.items) ? updated : await loadCart();
       if (isOpen) render();
     } catch (_) {}
+  }
+
+  /* On load, sync our UI to whatever discount the cart already carries (e.g. applied
+     earlier in the session or carried back from native checkout):
+       • applicable code  → show it as applied so it renders correctly and has a × to remove
+       • only non-applicable codes left (e.g. the eligible product was removed) → strip
+         them from the cart so no phantom discount text lingers on a line item. */
+  function restoreDiscountState() {
+    if (!cart || !settings || !settings.discountEnabled) return;
+    var codes = cart.discount_codes || [];
+    if (!codes.length) return;
+    var applied = null;
+    for (var i = 0; i < codes.length; i++) { if (codes[i].applicable) { applied = codes[i]; break; } }
+    if (applied) {
+      discountCode = (applied.code || "").toUpperCase();
+      var saved = codeAllocatedSavings();
+      appliedDiscount = {
+        valid: true,
+        type: saved > 0 ? "fixed_amount" : "checkout-only",
+        nativeAmount: saved,
+        appliesToAll: true, productIds: [], variantIds: [],
+        minimumRequirement: null, code: discountCode,
+      };
+    } else {
+      /* Only non-applicable codes remain — remove them so nothing phantom shows. */
+      applyDiscountSession("").then(function () { return loadCart(); }).then(function (c) {
+        cart = c; if (isOpen) render();
+      }).catch(function () {});
+    }
   }
 
   function buildDOM() {
@@ -750,7 +790,12 @@
       on(ocuBodyCheck, "change", function () {
         if (ocuBodyCheck.checked) {
           ocuBodyCheck.disabled = true;
-          cartAdd(ocuBodyId, 1, {}).catch(function () { ocuBodyCheck.checked = false; }).finally(function () { ocuBodyCheck.disabled = false; });
+          cartAdd(ocuBodyId, 1, {})
+            .catch(function (err) {
+              ocuBodyCheck.checked = false;
+              showToast((err && err.message) || "Couldn't add this item — it may be sold out.", 4000, false);
+            })
+            .finally(function () { ocuBodyCheck.disabled = false; });
         } else {
           var ocuBodyItem = cart.items.find(function (i) { return String(i.variant_id) === ocuBodyId; });
           if (ocuBodyItem) {
@@ -768,7 +813,12 @@
       on(gwCheck, "change", function () {
         if (gwCheck.checked) {
           gwCheck.disabled = true;
-          cartAdd(gwId, 1, { _edge_cart_gift_wrap: "true" }).catch(function () { gwCheck.checked = false; }).finally(function () { gwCheck.disabled = false; });
+          cartAdd(gwId, 1, { _edge_cart_gift_wrap: "true" })
+            .catch(function (err) {
+              gwCheck.checked = false;
+              showToast((err && err.message) || "Couldn't add gift wrap — it may be sold out.", 4000, false);
+            })
+            .finally(function () { gwCheck.disabled = false; });
         } else {
           var gwItem = cart.items.find(function (i) { return String(i.variant_id) === gwId; });
           if (gwItem) {
@@ -886,7 +936,7 @@
             '</div>',
           '</div>',
           lineSave > 0
-            ? '<div class="ec-item__disc"><span class="ec-item__disc-tag">🏷 ' + esc(discountCode || "Discount") + '</span><span class="ec-item__disc-amt">−' + money(lineSave) + '</span></div>'
+            ? '<div class="ec-item__disc"><span class="ec-item__disc-tag">🏷 ' + esc(lineCodeTitle(item) || discountCode || "Discount") + '</span><span class="ec-item__disc-amt">−' + money(lineSave) + '</span></div>'
             : "",
         '</div>',
       '</div>',
@@ -2980,10 +3030,39 @@
     return false;
   }
 
+  /* Change a line by its 1-based position. Used as a fallback when a key-based
+     change is a no-op because a discount re-keyed the line. */
+  function cartChangeByLine(line, quantity) {
+    return fetch("/cart/change.js", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      credentials: "same-origin",
+      body: JSON.stringify({ line: line, quantity: quantity }),
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.description || "Change failed"); });
+      return r.json().then(function (c) { cart = c; });
+    });
+  }
+
   function doCartChange(key, qty) {
     updatingKeys[key] = true;
     renderBody();
+    /* Remember the line's position now, in case a stale key makes the change a no-op. */
+    var clickedIdx = -1;
+    var items0 = (cart && cart.items) || [];
+    for (var ci = 0; ci < items0.length; ci++) { if (items0[ci].key === key) { clickedIdx = ci; break; } }
+
     cartChange(key, qty) /* key-based: targets the exact line, so qty/remove never hits a neighbouring line (e.g. X vs Y in Buy X Get Y) */
+      .then(function () {
+        /* Safety net for REMOVAL only: if the key was stale (a discount re-keyed the
+           line) the removal did nothing — the line is still here. Retry by its
+           original position. Quantity updates stay key-only so Buy X Get Y never
+           hits a neighbouring line. */
+        var stillThere = ((cart && cart.items) || []).some(function (i) { return i.key === key; });
+        if (qty === 0 && stillThere && clickedIdx >= 0) {
+          return cartChangeByLine(clickedIdx + 1, 0);
+        }
+      })
       .then(function () {
         delete updatingKeys[key];
         aiSeedProductId = null; /* invalidate AI cache — cart composition changed */
