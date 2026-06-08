@@ -64,9 +64,21 @@ export const loader = async ({ request }) => {
     settings = await prisma.cartSettings.findUnique({ where: { shop } });
   } catch (_) {}
 
+  const dbPlan = settings?.planName ?? "starter";
+
+  /* Downgrade reflection: after a downgrade we cancel the Shopify subscription and
+     set our planName back to "starter", but Shopify keeps the cancelled sub ACTIVE
+     until the billing period ends (grace period). So if Shopify still reports a paid
+     sub yet our DB says the merchant downgraded to starter, show Free immediately.
+     (Upgrades are unaffected: subscribe sets planName to the paid plan, so this
+     only triggers on an actual downgrade.) */
+  if (activePlan !== "Starter" && dbPlan === "starter") {
+    activePlan = "Starter";
+  }
+
   return {
     activePlan,
-    planName:    settings?.planName    ?? "starter",
+    planName:    dbPlan,
     freeForever: settings?.freeForever ?? false,
     shop,
   };
