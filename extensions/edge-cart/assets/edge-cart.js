@@ -967,7 +967,9 @@
         '<div class="ec-item__body">',
           '<div class="ec-item__top">',
             '<div class="ec-item__info">',
-              settings.clickableLineItems !== false
+              (settings.clickableLineItems !== false && !freebie)
+                /* Freebie gifts are hidden products — never link to them (the product
+                   page is hidden), so render the gift title as plain, non-clickable text. */
                 ? '<a class="ec-item__title ec-item__title--link" href="' + esc(item.url || ("/products/" + (item.handle || ""))) + '">' + esc(item.product_title) + '</a>'
                 : '<p class="ec-item__title">' + esc(item.product_title) + '</p>',
               showVar && item.variant_title && item.variant_title !== "Default Title"
