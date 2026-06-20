@@ -17,7 +17,7 @@ export default function Index() {
     <div className={styles.index}>
       <div className={styles.content}>
         <div className={styles.logo}>🛒</div>
-        <h1 className={styles.heading}>EdgeCart</h1>
+        <h1 className={styles.heading}>ZoomCart</h1>
         <p className={styles.tagline}>
           Slide-in side cart with upsells, free gifts &amp; discount codes —
           controlled entirely from your Shopify admin.
@@ -40,7 +40,7 @@ export default function Index() {
               />
             </div>
             <button className={styles.button} type="submit">
-              Install EdgeCart →
+              Install ZoomCart →
             </button>
           </Form>
         )}
@@ -75,7 +75,7 @@ export default function Index() {
           <div className={styles.privacySection}>
             <h3>1. Information We Collect</h3>
             <p>
-              EdgeCart collects only the information necessary to provide the side cart service to Shopify merchants:
+              ZoomCart collects only the information necessary to provide the side cart service to Shopify merchants:
             </p>
             <ul>
               <li><strong>Shop domain</strong> — used to identify your store and store your settings.</li>
@@ -88,8 +88,8 @@ export default function Index() {
           <div className={styles.privacySection}>
             <h3>2. How We Use Your Information</h3>
             <ul>
-              <li>To display and operate the EdgeCart side cart on your storefront.</li>
-              <li>To save and retrieve the settings you configure in the EdgeCart admin panel.</li>
+              <li>To display and operate the ZoomCart side cart on your storefront.</li>
+              <li>To save and retrieve the settings you configure in the ZoomCart admin panel.</li>
               <li>To create freebie products in your store via the Shopify Admin API when you use the Free Gift feature.</li>
             </ul>
             <p>We do not sell, rent, or share your data with any third parties for marketing purposes.</p>
@@ -105,14 +105,14 @@ export default function Index() {
           <div className={styles.privacySection}>
             <h3>4. Data Retention & Deletion</h3>
             <p>
-              When you uninstall EdgeCart from your Shopify store, we automatically delete all settings and session data associated with your shop within 48 hours. You may also contact us at any time to request immediate data deletion.
+              When you uninstall ZoomCart from your Shopify store, we automatically delete all settings and session data associated with your shop within 48 hours. You may also contact us at any time to request immediate data deletion.
             </p>
           </div>
 
           <div className={styles.privacySection}>
             <h3>5. Shopify's Role</h3>
             <p>
-              EdgeCart is built on Shopify's platform and complies with the{" "}
+              ZoomCart is built on Shopify's platform and complies with the{" "}
               <a
                 className={styles.privacyLink}
                 href="https://www.shopify.com/legal/api-terms"
@@ -137,7 +137,7 @@ export default function Index() {
           <div className={styles.privacySection}>
             <h3>6. GDPR</h3>
             <p>
-              EdgeCart provides mandatory GDPR webhook endpoints as required by Shopify:
+              ZoomCart provides mandatory GDPR webhook endpoints as required by Shopify:
             </p>
             <ul>
               <li><strong>Customer data request</strong> — we confirm we hold no customer PII.</li>

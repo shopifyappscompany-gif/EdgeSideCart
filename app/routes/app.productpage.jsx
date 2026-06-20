@@ -163,7 +163,7 @@ export default function ProductPageSettings() {
 
       <s-section>
         <div style={{ padding: "12px 16px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, fontSize: 13, color: "#1e40af" }}>
-          <strong>How it works:</strong> These widgets inject automatically into any Shopify product page where EdgeCart is installed via the App Embed. They work across all themes — Dawn, Debut, Horizon, Minimal, and more.
+          <strong>How it works:</strong> These widgets inject automatically into any Shopify product page where ZoomCart is installed via the App Embed. They work across all themes — Dawn, Debut, Horizon, Minimal, and more.
         </div>
       </s-section>
 

@@ -28,18 +28,18 @@ const s = {
 export default function Privacy() {
   return (
     <div style={s.page}>
-      <div style={s.logo}>EdgeCart</div>
+      <div style={s.logo}>ZoomCart</div>
       <h1 style={s.h1}>Privacy Policy</h1>
       <p style={s.date}>Last updated: May 2026</p>
 
       <p style={s.p}>
-        EdgeCart ("we", "our", or "us") is a Shopify app that adds a slide-in side
+        ZoomCart ("we", "our", or "us") is a Shopify app that adds a slide-in side
         cart drawer to Shopify storefronts. This Privacy Policy explains what data we
         collect, how we use it, and your rights.
       </p>
 
       <h2 style={s.h2}>1. Data We Collect</h2>
-      <p style={s.p}>When a merchant installs EdgeCart, we collect and store:</p>
+      <p style={s.p}>When a merchant installs ZoomCart, we collect and store:</p>
       <ul>
         <li style={s.li}><strong>Shop domain</strong> — to identify the merchant store (e.g. example.myshopify.com).</li>
         <li style={s.li}><strong>Access token</strong> — OAuth token issued by Shopify to call Admin APIs on the merchant's behalf. Stored encrypted in our database.</li>
@@ -47,7 +47,7 @@ export default function Privacy() {
         <li style={s.li}><strong>Support messages</strong> — name and message text submitted via the in-app Help & Support form. Used only to respond to the merchant.</li>
       </ul>
       <p style={s.p}>
-        On the customer (storefront) side, EdgeCart reads the Shopify cart session via
+        On the customer (storefront) side, ZoomCart reads the Shopify cart session via
         the Shopify AJAX Cart API (<code>/cart.js</code>). This happens entirely
         client-side in the customer's browser. We do not store any cart data, customer
         names, email addresses, or payment information on our servers.
@@ -79,12 +79,12 @@ export default function Privacy() {
 
       <h2 style={s.h2}>5. GDPR & Customer Data Rights</h2>
       <p style={s.p}>
-        EdgeCart complies with Shopify's mandatory GDPR webhooks:
+        ZoomCart complies with Shopify's mandatory GDPR webhooks:
       </p>
       <ul>
         <li style={s.li}><strong>Customer data request</strong> — We respond to data access requests within 30 days. Since we do not store customer personal data, the response will confirm no data is held.</li>
         <li style={s.li}><strong>Customer data erasure</strong> — We process erasure requests immediately. No customer personal data is held.</li>
-        <li style={s.li}><strong>Shop data erasure</strong> — When a merchant uninstalls EdgeCart, all their CartSettings and session data are permanently deleted from our database within 48 hours.</li>
+        <li style={s.li}><strong>Shop data erasure</strong> — When a merchant uninstalls ZoomCart, all their CartSettings and session data are permanently deleted from our database within 48 hours.</li>
       </ul>
 
       <h2 style={s.h2}>6. Data Retention</h2>
@@ -97,7 +97,7 @@ export default function Privacy() {
 
       <h2 style={s.h2}>7. Cookies</h2>
       <p style={s.p}>
-        EdgeCart does not set any tracking cookies. The side cart uses
+        ZoomCart does not set any tracking cookies. The side cart uses
         <code>sessionStorage</code> in the customer's browser only to remember whether
         the cart was open before a page redirect. This data never leaves the customer's
         browser and is cleared when the browser tab is closed.
@@ -105,14 +105,14 @@ export default function Privacy() {
 
       <h2 style={s.h2}>8. Children's Privacy</h2>
       <p style={s.p}>
-        EdgeCart is a B2B tool for Shopify merchants. We do not knowingly collect
+        ZoomCart is a B2B tool for Shopify merchants. We do not knowingly collect
         data from persons under the age of 16.
       </p>
 
       <h2 style={s.h2}>9. Changes to This Policy</h2>
       <p style={s.p}>
         We may update this policy from time to time. Material changes will be
-        communicated via the app admin or email. Continued use of EdgeCart after
+        communicated via the app admin or email. Continued use of ZoomCart after
         changes constitutes acceptance of the updated policy.
       </p>
 
@@ -126,7 +126,7 @@ export default function Privacy() {
 
       <hr style={s.divider} />
       <p style={{ fontSize: 13, color: "#9ca3af", textAlign: "center" }}>
-        © 2026 EdgeCart — SwiftCartUpsell. All rights reserved.
+        © 2026 ZoomCart — SwiftCartUpsell. All rights reserved.
       </p>
     </div>
   );

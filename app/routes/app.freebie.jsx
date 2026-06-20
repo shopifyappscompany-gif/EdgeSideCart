@@ -6,7 +6,7 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { isPremiumLocked } from "../trial.server";
 
-const LOCK_MSG = "Your free trial has ended. Upgrade to Growth or Scale to use this feature, or contact EdgeCart support.";
+const LOCK_MSG = "Your free trial has ended. Upgrade to Growth or Scale to use this feature, or contact ZoomCart support.";
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -343,7 +343,7 @@ export default function FreebieSettings() {
       {locked && (
         <div style={{ margin: "0 0 16px", padding: "14px 16px", background: "#fff4e5", border: "1px solid #ffd699", borderRadius: 10, color: "#8a5300" }}>
           <strong style={{ display: "block", fontSize: 14, marginBottom: 4 }}>🔒 Freebie is a premium feature</strong>
-          <span style={{ fontSize: 13 }}>Your free trial has ended. Please <a href="/app/billing" style={{ color: "#8a5300", fontWeight: 700 }}>upgrade to Growth or Scale</a> to use Freebie, or contact EdgeCart support to extend your trial.</span>
+          <span style={{ fontSize: 13 }}>Your free trial has ended. Please <a href="/app/billing" style={{ color: "#8a5300", fontWeight: 700 }}>upgrade to Growth or Scale</a> to use Freebie, or contact ZoomCart support to extend your trial.</span>
         </div>
       )}
       {!locked && isDirty && <SaveBar onSave={handleSave} onDiscard={handleDiscard} saving={saving && !creatingForId} />}
@@ -644,7 +644,7 @@ function OfferCard({ offer, index, expanded, creating, saving, onToggle, onUpdat
             ) : (
               <div style={{ padding: "16px", background: "#fafafa", border: "1.5px dashed #ddd", borderRadius: 12 }}>
                 <p style={{ fontSize: 13, color: "#555", margin: "0 0 12px" }}>
-                  Pick any product — EdgeCart creates a <strong>$0.00 copy</strong> tagged{" "}
+                  Pick any product — ZoomCart creates a <strong>$0.00 copy</strong> tagged{" "}
                   <code style={{ background: "#f0f0f0", padding: "1px 5px", borderRadius: 4, fontSize: 11 }}>edge-cart-freebie</code>{" "}
                   that gets added to cart automatically.
                 </p>

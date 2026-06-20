@@ -30,7 +30,7 @@ export const action = async ({ request }) => {
   try {
     await sendSupportEmail({ shop: session.shop, name, message });
   } catch (err) {
-    console.error("[EdgeCart] Failed to send support email:", err.message);
+    console.error("[ZoomCart] Failed to send support email:", err.message);
   }
 
   return { success: true };
@@ -153,7 +153,7 @@ export default function HelpPage() {
             <div style={styles.cardIcon}>📅</div>
             <h3 style={styles.cardTitle}>Schedule a Demo</h3>
             <p style={styles.cardDesc}>
-              Get a complete walkthrough of EdgeCart features and learn best practices to boost your store's average order value.
+              Get a complete walkthrough of ZoomCart features and learn best practices to boost your store's average order value.
             </p>
             <button
               onClick={() => openExternal(CALENDLY_URL)}
@@ -171,7 +171,7 @@ export default function HelpPage() {
               Reach our support team directly. We typically respond within 24 hours on business days.
             </p>
             <button
-              onClick={() => openMailto(SUPPORT_EMAIL, "EdgeCart Support — " + shop)}
+              onClick={() => openMailto(SUPPORT_EMAIL, "ZoomCart Support — " + shop)}
               style={{ ...styles.cardBtn, background: "#059669" }}
             >
               Email Us
@@ -244,7 +244,7 @@ export default function HelpPage() {
       <s-section slot="aside" heading="Quick Tips">
         <s-stack direction="block" gap="base">
           <s-paragraph>
-            <s-text fontWeight="bold">App Embed:</s-text> Enable EdgeCart in Themes → Customize → App Embeds.
+            <s-text fontWeight="bold">App Embed:</s-text> Enable ZoomCart in Themes → Customize → App Embeds.
           </s-paragraph>
           <s-paragraph>
             <s-text fontWeight="bold">Settings:</s-text> Configure banner, colors, and discount in General Settings.

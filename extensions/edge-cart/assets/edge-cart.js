@@ -1,5 +1,5 @@
 /* ============================================================
-   EdgeCart SideCart — Storefront JavaScript
+   ZoomCart SideCart — Storefront JavaScript
    ============================================================ */
 (function () {
   "use strict";
@@ -1284,7 +1284,7 @@
       if (settings.trustBadgesEnabled) checkoutHtml += buildTrustBadgesHTML();
       checkoutHtml += '<div class="ec-powered">' +
         '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13l1-8z" fill="currentColor"/></svg>' +
-        'Powered by <strong>EdgeCart</strong></div>';
+        'Powered by <strong>ZoomCart</strong></div>';
       checkoutBar.innerHTML = checkoutHtml;
     }
 

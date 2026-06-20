@@ -215,7 +215,7 @@ export default function Dashboard() {
           <div style={{ flex: 1 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
               <div style={s.heroBadge}>
-                <span style={{ color: "#4ade80" }}>●</span> EdgeCart is active
+                <span style={{ color: "#4ade80" }}>●</span> ZoomCart is active
               </div>
               <div
                 onClick={() => navigate("/app/billing")}
@@ -224,7 +224,7 @@ export default function Dashboard() {
                 ⚡ {planLabels[planKey]}
               </div>
             </div>
-            <h1 style={s.heroTitle}>Welcome to EdgeCart</h1>
+            <h1 style={s.heroTitle}>Welcome to ZoomCart</h1>
             <p style={s.heroSub}>
               Your all-in-one side cart — boost conversions with upsells,<br />
               free gifts, tiered rewards, and smart discounts.
@@ -349,7 +349,7 @@ export default function Dashboard() {
               { n: 1, text: "Configure your cart settings using the links above." },
               { n: 2, text: "Go to Shopify Admin → Online Store → Themes → Customize." },
               { n: 3, text: 'Click "App Embeds" in the left sidebar.' },
-              { n: 4, text: 'Toggle on "EdgeCart SideCart" and Save. You\'re live!' },
+              { n: 4, text: 'Toggle on "ZoomCart SideCart" and Save. You\'re live!' },
             ].map((step) => (
               <div key={step.n} style={s.stepCard}>
                 <div style={s.stepNum}>{step.n}</div>
@@ -374,7 +374,7 @@ export default function Dashboard() {
               💬 Need Help?
             </h3>
             <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.6 }}>
-              Our support team is here to help you get the most out of EdgeCart. Reach out anytime.
+              Our support team is here to help you get the most out of ZoomCart. Reach out anytime.
             </p>
 
             <div
