@@ -19,7 +19,7 @@ export const action = async ({ request }) => {
   /* Free-plan trial gate — block configuring Upsell / AI Upsell once the trial ends. */
   const lockSettings = await prisma.cartSettings.findUnique({ where: { shop } });
   if (isPremiumLocked(lockSettings)) {
-    return { error: "Your free trial has ended. Upgrade to Growth or Scale to use this feature, or contact EdgeCart support.", locked: true };
+    return { error: "Your free trial has ended. Upgrade to Growth or Scale to use this feature, or contact ZoomCart support.", locked: true };
   }
 
   const form = await request.formData();
@@ -201,7 +201,7 @@ export default function UpsellSettings() {
       {locked && (
         <div style={{ margin: "0 0 16px", padding: "14px 16px", background: "#fff4e5", border: "1px solid #ffd699", borderRadius: 10, color: "#8a5300" }}>
           <strong style={{ display: "block", fontSize: 14, marginBottom: 4 }}>🔒 Upsell is a premium feature</strong>
-          <span style={{ fontSize: 13 }}>Your free trial has ended. Please <a href="/app/billing" style={{ color: "#8a5300", fontWeight: 700 }}>upgrade to Growth or Scale</a> to use Upsell &amp; AI Upsell, or contact EdgeCart support to extend your trial.</span>
+          <span style={{ fontSize: 13 }}>Your free trial has ended. Please <a href="/app/billing" style={{ color: "#8a5300", fontWeight: 700 }}>upgrade to Growth or Scale</a> to use Upsell &amp; AI Upsell, or contact ZoomCart support to extend your trial.</span>
         </div>
       )}
       {!locked && isDirty && <SaveBar onSave={handleSubmit} onDiscard={handleDiscard} saving={saving} />}

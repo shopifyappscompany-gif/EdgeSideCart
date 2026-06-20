@@ -5,7 +5,7 @@ export async function sendSupportEmail({ shop, name, message }) {
   const pass = process.env.EMAIL_PASS;
 
   if (!user || !pass) {
-    console.warn("[EdgeCart] EMAIL_USER or EMAIL_PASS not set — skipping email.");
+    console.warn("[ZoomCart] EMAIL_USER or EMAIL_PASS not set — skipping email.");
     return;
   }
 
@@ -15,13 +15,13 @@ export async function sendSupportEmail({ shop, name, message }) {
   });
 
   await transporter.sendMail({
-    from: `"EdgeCart Support" <${user}>`,
+    from: `"ZoomCart Support" <${user}>`,
     to: user,
-    subject: `[EdgeCart] New message from ${shop}`,
+    subject: `[ZoomCart] New message from ${shop}`,
     html: `
       <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
         <h2 style="color:#0f172a;margin-bottom:4px">New Support Message</h2>
-        <p style="color:#6b7280;margin-top:0;font-size:14px">Received from EdgeCart admin</p>
+        <p style="color:#6b7280;margin-top:0;font-size:14px">Received from ZoomCart admin</p>
         <table style="width:100%;border-collapse:collapse;font-size:14px">
           <tr>
             <td style="padding:10px 0;border-bottom:1px solid #f3f4f6;color:#374151;font-weight:600;width:100px">Shop</td>
@@ -36,7 +36,7 @@ export async function sendSupportEmail({ shop, name, message }) {
             <td style="padding:10px 0;color:#111827;white-space:pre-wrap">${message}</td>
           </tr>
         </table>
-        <p style="margin-top:24px;font-size:12px;color:#9ca3af">Sent via EdgeCart Help & Support page</p>
+        <p style="margin-top:24px;font-size:12px;color:#9ca3af">Sent via ZoomCart Help & Support page</p>
       </div>
     `,
   });

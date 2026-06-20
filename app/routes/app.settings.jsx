@@ -853,7 +853,7 @@ export default function GeneralSettings() {
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {[
-              { value: "drawer", label: "Open Side Cart", desc: "Slide open EdgeCart immediately after adding a product (default)." },
+              { value: "drawer", label: "Open Side Cart", desc: "Slide open ZoomCart immediately after adding a product (default)." },
               { value: "toast", label: "Show Toast Notification", desc: "Display a small popup confirming the product was added without opening the cart." },
             ].map(opt => (
               <label key={opt.value} style={{
@@ -911,7 +911,7 @@ export default function GeneralSettings() {
               Custom Cart Icon Selector
             </label>
             <p style={{ fontSize: 12, color: "#9ca3af", margin: "0 0 8px" }}>
-              EdgeCart automatically detects Horizon, Tinker, Savor, Dawn, and other popular themes.
+              ZoomCart automatically detects Horizon, Tinker, Savor, Dawn, and other popular themes.
               If your theme uses a different cart icon, paste its CSS selector here
               (right-click the cart icon → Inspect → copy the unique class or ID).
               Example: <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 3 }}>.my-theme__cart-btn</code>
@@ -965,7 +965,7 @@ export default function GeneralSettings() {
               onChange={e => setCustomJs(e.target.value)}
               rows={10}
               spellCheck={false}
-              placeholder={`// Custom JavaScript — runs after EdgeCart loads\n\n// Example: log when cart opens\ndocument.addEventListener('EdgeCart:open', function() {\n  console.log('Cart opened');\n});\n\n// Example: change button text\nvar btn = document.querySelector('.ec-checkout-btn');\nif (btn) btn.textContent = 'Buy Now';`}
+              placeholder={`// Custom JavaScript — runs after ZoomCart loads\n\n// Example: log when cart opens\ndocument.addEventListener('ZoomCart:open', function() {\n  console.log('Cart opened');\n});\n\n// Example: change button text\nvar btn = document.querySelector('.ec-checkout-btn');\nif (btn) btn.textContent = 'Buy Now';`}
               style={{
                 width: "100%", display: "block", fontFamily: "monospace", fontSize: 12,
                 padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 6,
@@ -1467,7 +1467,7 @@ function ProductPageTab({ settings: s, shopify }) {
 
       <s-section>
         <div style={{ padding: "12px 16px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, fontSize: 13, color: "#1e40af" }}>
-          <strong>How it works:</strong> These widgets inject automatically into any Shopify product page where EdgeCart is installed via the App Embed. They work across all themes — Dawn, Debut, Horizon, Minimal, and more.
+          <strong>How it works:</strong> These widgets inject automatically into any Shopify product page where ZoomCart is installed via the App Embed. They work across all themes — Dawn, Debut, Horizon, Minimal, and more.
         </div>
       </s-section>
 

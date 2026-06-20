@@ -3,7 +3,7 @@
 client_id = "b5830ef0857b056c23608b0df3eedfca"
 application_url = "https://edgesidecart.onrender.com"
 embedded = true
-name = "EdgeCart"
+name = "ZoomCart"
 
 [access_scopes]
 scopes = "read_products,write_products,read_discounts,read_publications"

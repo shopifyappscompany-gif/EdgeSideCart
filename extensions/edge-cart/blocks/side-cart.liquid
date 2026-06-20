@@ -1,4 +1,4 @@
-{% comment %} EdgeCart SideCart — App Embed Block {% endcomment %}
+{% comment %} ZoomCart SideCart — App Embed Block {% endcomment %}
 {% if block.settings.enabled %}
   {{ 'edge-cart.css' | asset_url | stylesheet_tag }}
   <script>
@@ -10,15 +10,15 @@
 
 {% schema %}
 {
-  "name": "EdgeCart SideCart",
+  "name": "ZoomCart SideCart",
   "target": "body",
   "settings": [
     {
       "type": "checkbox",
       "id": "enabled",
-      "label": "Enable EdgeCart Side Cart",
+      "label": "Enable ZoomCart Side Cart",
       "default": true,
-      "info": "Toggle the side cart on or off for this theme. All other settings are managed in the EdgeCart app."
+      "info": "Toggle the side cart on or off for this theme. All other settings are managed in the ZoomCart app."
     }
   ]
 }
